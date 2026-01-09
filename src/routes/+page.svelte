@@ -5,6 +5,8 @@
 	import { createMediaRecorder, getSupportedAudioFormat } from '$lib/audio';
 	import EqVisualizer from '$lib/components/EqVisualizer.svelte';
 	import TranscriptionProvider from '$lib/components/TranscriptionProvider.svelte';
+	import { Button } from '$lib/components/ui/button/index.js';
+	import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '$lib/components/ui/card/index.js';
 	import type { TranscriptionResult } from '$lib/types';
 
 	/**
@@ -158,86 +160,96 @@
 </script>
 
 <TranscriptionProvider {engine}>
-	<div class="max-w-4xl mx-auto">
+	<div class="max-w-4xl mx-auto space-y-6">
 		<!-- Recording Controls -->
-		<div class="bg-white rounded-lg shadow p-6 mb-6">
-			<div class="flex items-center justify-between mb-4">
-				<div>
-					<h2 class="text-2xl font-bold text-gray-900">Live Transcription</h2>
-					<p class="text-gray-500 text-sm mt-1">Record your voice and see real-time transcription</p>
+		<Card>
+			<CardHeader>
+				<div class="flex items-center justify-between">
+					<div>
+						<CardTitle>Live Transcription</CardTitle>
+						<CardDescription>Record your voice and see real-time transcription</CardDescription>
+					</div>
+					<div class="text-3xl font-mono font-bold text-primary">
+						{formatTime(recordingTime)}
+					</div>
 				</div>
-				<div class="text-3xl font-mono font-bold text-blue-600">
-					{formatTime(recordingTime)}
-				</div>
-			</div>
-
-			{#if analyser}
-				<div class="mb-6">
-					<EqVisualizer {analyser} barCount={32} height={150} />
-				</div>
-			{/if}
-
-			<div class="flex gap-3 flex-wrap">
-				{#if !isRecording}
-					<button
-						onclick={startRecording}
-						class="px-6 py-3 bg-red-600 text-white rounded font-semibold hover:bg-red-700 transition flex items-center gap-2"
-					>
-						● Record
-					</button>
-				{:else}
-					{#if !isPaused}
-						<button
-							onclick={pauseRecording}
-							class="px-6 py-3 bg-yellow-600 text-white rounded font-semibold hover:bg-yellow-700 transition flex items-center gap-2"
-						>
-							⏸ Pause
-						</button>
-					{:else}
-						<button
-							onclick={resumeRecording}
-							class="px-6 py-3 bg-blue-600 text-white rounded font-semibold hover:bg-blue-700 transition flex items-center gap-2"
-						>
-							▶ Resume
-						</button>
-					{/if}
-
-					<button
-						onclick={stopRecording}
-						class="px-6 py-3 bg-gray-600 text-white rounded font-semibold hover:bg-gray-700 transition flex items-center gap-2"
-					>
-						⏹ Stop
-					</button>
+			</CardHeader>
+			<CardContent class="space-y-6">
+				{#if analyser}
+					<div>
+						<EqVisualizer {analyser} barCount={32} height={150} />
+					</div>
 				{/if}
-			</div>
-		</div>
+
+				<div class="flex gap-3 flex-wrap">
+					{#if !isRecording}
+						<Button
+							onclick={startRecording}
+							variant="destructive"
+							class="flex items-center gap-2"
+						>
+							● Record
+						</Button>
+					{:else}
+						{#if !isPaused}
+							<Button
+								onclick={pauseRecording}
+								variant="secondary"
+								class="flex items-center gap-2"
+							>
+								⏸ Pause
+							</Button>
+						{:else}
+							<Button
+								onclick={resumeRecording}
+								variant="default"
+								class="flex items-center gap-2"
+							>
+								▶ Resume
+							</Button>
+						{/if}
+
+						<Button
+							onclick={stopRecording}
+							variant="outline"
+							class="flex items-center gap-2"
+						>
+							⏹ Stop
+						</Button>
+					{/if}
+				</div>
+			</CardContent>
+		</Card>
 
 		<!-- Transcription Display -->
-		<div class="bg-white rounded-lg shadow p-6">
-			<h3 class="text-lg font-semibold text-gray-900 mb-4">Transcript</h3>
-
-			{#if transcript.length === 0}
-				<p class="text-gray-500 text-center py-8">No transcription yet. Start recording to begin.</p>
-			{:else}
-				<div class="space-y-3">
-					{#each transcript as item, idx (idx)}
-						<div class="flex {item.isFinal ? 'justify-end' : 'justify-start'}">
-							<div
-								class="{item.isFinal
-									? 'bg-blue-500 text-white'
-									: 'bg-gray-200 text-gray-700'} rounded-lg px-4 py-2 max-w-xs"
-							>
-								<p class="text-sm">{item.text}</p>
-								{#if item.confidence !== undefined}
-									<p class="text-xs {item.isFinal ? 'text-blue-100' : 'text-gray-500'} mt-1">
-										Confidence: {(item.confidence * 100).toFixed(0)}%
-									</p>
-								{/if}
+		<Card>
+			<CardHeader>
+				<CardTitle class="text-lg">Transcript</CardTitle>
+			</CardHeader>
+			<CardContent>
+				{#if transcript.length === 0}
+					<p class="text-muted-foreground text-center py-8">No transcription yet. Start recording to begin.</p>
+				{:else}
+					<div class="space-y-3">
+						{#each transcript as item, idx (idx)}
+							<div class="flex {item.isFinal ? 'justify-end' : 'justify-start'}">
+								<div
+									class="{item.isFinal
+										? 'bg-primary text-primary-foreground'
+										: 'bg-accent/10 text-foreground'} rounded-lg px-4 py-2 max-w-xs"
+								>
+									<p class="text-sm">{item.text}</p>
+									{#if item.confidence !== undefined}
+										<p class="text-xs {item.isFinal ? 'text-primary-foreground/70' : 'text-muted-foreground'} mt-1">
+											Confidence: {(item.confidence * 100).toFixed(0)}%
+										</p>
+									{/if}
+								</div>
 							</div>
-						</div>
-					{/each}
-				</div>
-			{/if}
-		</div>
+						{/each}
+					</div>
+				{/if}
+			</CardContent>
+		</Card>
 	</div>
 </TranscriptionProvider>
