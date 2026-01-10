@@ -6,7 +6,13 @@
 	import EqVisualizer from '$lib/components/EqVisualizer.svelte';
 	import TranscriptionProvider from '$lib/components/TranscriptionProvider.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
-	import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '$lib/components/ui/card/index.js';
+	import {
+		Card,
+		CardContent,
+		CardDescription,
+		CardHeader,
+		CardTitle,
+	} from '$lib/components/ui/card/index.js';
 	import { Mic } from 'lucide-svelte';
 	import type { TranscriptionResult } from '$lib/types';
 
@@ -17,30 +23,30 @@
 
 	let isRecording: boolean = $state(false);
 	let isPaused: boolean = $state(false);
-	
+
 	/**
 	 * STREAMING TRANSCRIPTION STATE PATTERN
-	 * 
+	 *
 	 * Instead of storing all results (interim + final) in a single array,
 	 * we separate state into two distinct categories:
-	 * 
+	 *
 	 * 1. finalResults: Array of completed transcriptions
 	 *    - Only contains finalized speech segments
 	 *    - Never changes once added
 	 *    - Displayed as chat-like messages (right-aligned)
-	 * 
+	 *
 	 * 2. currentInterim: Single interim result that updates in real-time
 	 *    - Represents what's currently being spoken
 	 *    - Updates as speech recognition processes audio
 	 *    - Replaced with null when finalized
 	 *    - Displayed as temporary preview (left-aligned, semi-transparent)
-	 * 
+	 *
 	 * ## Benefits:
 	 * - No duplicate entries in UI (old problem: "Hello", "Hello world", "Hello world")
 	 * - Clean visual progression: interim updates → becomes final
 	 * - Efficient re-renders (only current interim changes, finals are immutable)
 	 * - Clear separation of temporary vs permanent transcriptions
-	 * 
+	 *
 	 * ## Example Flow:
 	 * User says "Hello world":
 	 * 1. currentInterim = { text: "Hello", isFinal: false }
@@ -124,43 +130,43 @@
 				await engine.start(stream);
 
 				const unsubscribeResult = engine.onResult((result: TranscriptionResult) => {
-				/**
-				 * RESULT HANDLER PATTERN
-				 * 
-				 * This handler receives transcription results from the engine and manages
-				 * the state transition from interim → final results.
-				 * 
-				 * ## State Transitions:
-				 * 
-				 * INTERIM RESULTS (isFinal = false):
-				 * - Replace currentInterim with the new result
-				 * - This creates an "updating in place" effect in the UI
-				 * - Not persisted to database (only shown in live view)
-				 * 
-				 * FINAL RESULTS (isFinal = true):
-				 * - Append to finalResults array (immutable pattern)
-				 * - Clear currentInterim (it's now finalized)
-				 * - Persist to database for long-term storage
-				 * 
-				 * ## Why This Works:
-				 * The engine (NativeEngine) ensures each result is emitted only once,
-				 * with interim results updating and final results marking completion.
-				 * This handler simply routes results to the appropriate state container.
-				 */
-				
-				// Only process results if not paused
-				if (!isPaused) {
-					if (result.isFinal) {
-						// Add final result to the immutable list
-						finalResults = [...finalResults, result];
-						// Clear interim result since it's now final
-						currentInterim = null;
-						// Persist final result to database
-						if (sessionId) {
-							storeTranscript(sessionId, result.text, Date.now() - (startTime || 0), true);
-						}
-					} else {
-						// Update current interim result (replaces previous interim)
+					/**
+					 * RESULT HANDLER PATTERN
+					 *
+					 * This handler receives transcription results from the engine and manages
+					 * the state transition from interim → final results.
+					 *
+					 * ## State Transitions:
+					 *
+					 * INTERIM RESULTS (isFinal = false):
+					 * - Replace currentInterim with the new result
+					 * - This creates an "updating in place" effect in the UI
+					 * - Not persisted to database (only shown in live view)
+					 *
+					 * FINAL RESULTS (isFinal = true):
+					 * - Append to finalResults array (immutable pattern)
+					 * - Clear currentInterim (it's now finalized)
+					 * - Persist to database for long-term storage
+					 *
+					 * ## Why This Works:
+					 * The engine (NativeEngine) ensures each result is emitted only once,
+					 * with interim results updating and final results marking completion.
+					 * This handler simply routes results to the appropriate state container.
+					 */
+
+					// Only process results if not paused
+					if (!isPaused) {
+						if (result.isFinal) {
+							// Add final result to the immutable list
+							finalResults = [...finalResults, result];
+							// Clear interim result since it's now final
+							currentInterim = null;
+							// Persist final result to database
+							if (sessionId) {
+								storeTranscript(sessionId, result.text, Date.now() - (startTime || 0), true);
+							}
+						} else {
+							// Update current interim result (replaces previous interim)
 						}
 					}
 				});
@@ -229,13 +235,13 @@
 			mediaRecorder.pause();
 			isPaused = true;
 			suppressTranscriptionErrors = true;
-			
+
 			// Stop the timer when paused
 			if (timerInterval) {
 				clearInterval(timerInterval);
 				timerInterval = null;
 			}
-			
+
 			console.log('Recording paused');
 		} catch (error) {
 			console.error('Error pausing recording:', error);
@@ -247,12 +253,12 @@
 		try {
 			mediaRecorder.resume();
 			suppressTranscriptionErrors = false;
-			
+
 			// Restart timer
 			timerInterval = setInterval(() => {
 				recordingTime = Date.now() - (startTime || 0);
 			}, 100);
-			
+
 			isPaused = false;
 			console.log('Recording resumed');
 		} catch (error) {
@@ -293,12 +299,12 @@
 				<div class="relative">
 					<!-- Rotating/Throbbing border when recording -->
 					{#if isRecording && !isPaused}
-						<div 
-							class="absolute inset-0 rounded-full border-2 border-transparent border-t-red-500 border-r-red-500 pointer-events-none" 
+						<div
+							class="absolute inset-0 rounded-full border-2 border-transparent border-t-red-500 border-r-red-500 pointer-events-none"
 							style="animation: spin 2s linear infinite;"
 						></div>
-						<div 
-							class="absolute inset-0 rounded-full border-2 border-red-500 opacity-20 pointer-events-none" 
+						<div
+							class="absolute inset-0 rounded-full border-2 border-red-500 opacity-20 pointer-events-none"
 							style="animation: throb 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;"
 						></div>
 					{/if}
@@ -310,14 +316,22 @@
 							w-40 h-40 rounded-full flex items-center justify-center
 							transition-all duration-300 transform
 							{isRecording && !isPaused
-								? 'bg-red-500 text-white shadow-xl shadow-red-500/50 hover:shadow-2xl hover:shadow-red-500/70'
-								: isRecording && isPaused
-									? 'bg-amber-500 text-white shadow-xl shadow-amber-500/50 hover:shadow-2xl hover:amber-500/70'
-									: 'bg-blue-600 text-white hover:bg-blue-700 hover:scale-110 hover:shadow-2xl hover:shadow-blue-500/50 active:scale-95 shadow-lg'}
+							? 'bg-red-500 text-white shadow-xl shadow-red-500/50 hover:shadow-2xl hover:shadow-red-500/70'
+							: isRecording && isPaused
+								? 'bg-amber-500 text-white shadow-xl shadow-amber-500/50 hover:shadow-2xl hover:amber-500/70'
+								: 'bg-blue-600 text-white hover:bg-blue-700 hover:scale-110 hover:shadow-2xl hover:shadow-blue-500/50 active:scale-95 shadow-lg'}
 							focus:outline-none focus:ring-4 focus:ring-offset-2
-							{isRecording && !isPaused ? 'focus:ring-red-500/50' : isRecording && isPaused ? 'focus:ring-amber-500/50' : 'focus:ring-blue-500/50'}
+							{isRecording && !isPaused
+							? 'focus:ring-red-500/50'
+							: isRecording && isPaused
+								? 'focus:ring-amber-500/50'
+								: 'focus:ring-blue-500/50'}
 						"
-						title={isRecording ? (isPaused ? 'Click to resume recording' : 'Click to pause recording') : 'Click to start recording'}
+						title={isRecording
+							? isPaused
+								? 'Click to resume recording'
+								: 'Click to pause recording'
+							: 'Click to start recording'}
 					>
 						<!-- Microphone Icon from lucide-svelte -->
 						<Mic class="w-20 h-20" strokeWidth={1.5} />
@@ -326,11 +340,13 @@
 
 				<!-- Recording Time Display -->
 				<div class="text-center">
-					<div class="text-5xl font-mono font-bold {isRecording && !isPaused
-						? 'text-red-500'
-						: isRecording && isPaused
-							? 'text-amber-500'
-							: 'text-gray-600'} transition-colors duration-300">
+					<div
+						class="text-5xl font-mono font-bold {isRecording && !isPaused
+							? 'text-red-500'
+							: isRecording && isPaused
+								? 'text-amber-500'
+								: 'text-gray-600'} transition-colors duration-300"
+					>
 						{formatTime(recordingTime)}
 					</div>
 				</div>
@@ -338,11 +354,13 @@
 				<!-- State Label and Clear Button -->
 				<div class="flex flex-col items-center gap-3">
 					<!-- Status Label below time -->
-					<p class="text-sm font-medium {isRecording && !isPaused
-						? 'text-red-500'
-						: isRecording && isPaused
-							? 'text-amber-500'
-							: 'text-blue-600'} transition-colors duration-300">
+					<p
+						class="text-sm font-medium {isRecording && !isPaused
+							? 'text-red-500'
+							: isRecording && isPaused
+								? 'text-amber-500'
+								: 'text-blue-600'} transition-colors duration-300"
+					>
 						{#if !isRecording}
 							Ready
 						{:else if isPaused}
@@ -384,7 +402,11 @@
 						{analyser}
 						barCount={32}
 						height={250}
-						barColor={isRecording && !isPaused ? '#ef4444' : isRecording && isPaused ? '#f59e0b' : '#3b82f6'}
+						barColor={isRecording && !isPaused
+							? '#ef4444'
+							: isRecording && isPaused
+								? '#f59e0b'
+								: '#3b82f6'}
 						disabledBarColor="#d1d5db"
 						disabled={!isRecording}
 					/>
@@ -398,7 +420,11 @@
 				{analyser}
 				barCount={32}
 				height={200}
-				barColor={isRecording && !isPaused ? '#ef4444' : isRecording && isPaused ? '#f59e0b' : '#3b82f6'}
+				barColor={isRecording && !isPaused
+					? '#ef4444'
+					: isRecording && isPaused
+						? '#f59e0b'
+						: '#3b82f6'}
 				disabledBarColor="#d1d5db"
 				disabled={!isRecording}
 			/>
@@ -406,27 +432,23 @@
 
 		<!-- Confirmation Dialog -->
 		{#if showClearConfirm}
-			<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onclick={() => (showClearConfirm = false)}>
+			<div
+				class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+				onclick={() => (showClearConfirm = false)}
+			>
 				<Card class="w-full max-w-sm mx-4" onclick={(e) => e.stopPropagation()}>
 					<CardHeader>
 						<CardTitle>Clear Recording?</CardTitle>
 						<CardDescription>
-							This will stop the current recording and clear the transcript. This action cannot be undone.
+							This will stop the current recording and clear the transcript. This action cannot be
+							undone.
 						</CardDescription>
 					</CardHeader>
 					<CardContent class="flex gap-3">
-						<Button
-							onclick={() => (showClearConfirm = false)}
-							variant="outline"
-							class="flex-1"
-						>
+						<Button onclick={() => (showClearConfirm = false)} variant="outline" class="flex-1">
 							Cancel
 						</Button>
-						<Button
-							onclick={confirmClearRecording}
-							variant="destructive"
-							class="flex-1"
-						>
+						<Button onclick={confirmClearRecording} variant="destructive" class="flex-1">
 							Clear
 						</Button>
 					</CardContent>
@@ -440,7 +462,7 @@
 				<CardTitle class="text-lg">Transcript</CardTitle>
 			</CardHeader>
 			<CardContent>
-			<!--
+				<!--
 				DISPLAY RENDERING PATTERN
 				
 				This component renders transcription results in a chat-like interface:
@@ -461,11 +483,13 @@
 				- Alignment (right vs left) shows status
 				- Color scheme differentiates temporary vs permanent
 			-->
-			{#if finalResults.length === 0 && !currentInterim}
-				<p class="text-muted-foreground text-center py-8">No transcription yet. Start recording to begin.</p>
-			{:else}
-				<div class="space-y-3">
-					<!-- FINAL RESULTS: Immutable list of completed transcriptions -->
+				{#if finalResults.length === 0 && !currentInterim}
+					<p class="text-muted-foreground text-center py-8">
+						No transcription yet. Start recording to begin.
+					</p>
+				{:else}
+					<div class="space-y-3">
+						<!-- FINAL RESULTS: Immutable list of completed transcriptions -->
 						{#each finalResults as item, idx (idx)}
 							<div class="flex justify-end">
 								<div class="bg-primary text-primary-foreground rounded-lg px-4 py-2 max-w-xs">
@@ -478,7 +502,7 @@
 								</div>
 							</div>
 						{/each}
-						
+
 						<!-- 
 						CURRENT INTERIM RESULT:
 						Only one interim result exists at any time (not an array).

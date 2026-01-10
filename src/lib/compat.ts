@@ -7,7 +7,8 @@
  * Check if Web Speech API is supported
  */
 export function isWebSpeechSupported(): boolean {
-	const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+	const SpeechRecognition =
+		(window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
 	return !!SpeechRecognition;
 }
 
@@ -76,12 +77,12 @@ export function checkApiSupport(): ApiSupport {
 		webSpeech: isWebSpeechSupported(),
 		mediaRecorder: isMediaRecorderSupported(),
 		webAudio: isWebAudioSupported(),
-		indexedDB: isIndexedDBSupported()
+		indexedDB: isIndexedDBSupported(),
 	};
 
 	return {
 		...support,
-		allSupported: Object.values(support).every((v) => v === true)
+		allSupported: Object.values(support).every((v) => v === true),
 	};
 }
 

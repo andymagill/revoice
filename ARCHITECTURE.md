@@ -19,6 +19,7 @@ This layered architecture allows each component to be tested, debugged, and exte
 **Purpose**: Abstract transcription service behind a consistent interface
 
 **Structure**:
+
 ```
 engines/
 ├── base.ts          # Abstract TranscriptionEngine class
@@ -29,12 +30,12 @@ engines/
 
 ```typescript
 interface ITranscriptionEngine {
-  start(stream, config?): Promise<void>
-  stop(): Promise<void>
-  getState(): 'idle' | 'listening' | 'processing'
-  onResult(callback): () => void
-  onError(callback): () => void
-  getMetadata(): EngineMetadata
+	start(stream, config?): Promise<void>;
+	stop(): Promise<void>;
+	getState(): 'idle' | 'listening' | 'processing';
+	onResult(callback): () => void;
+	onError(callback): () => void;
+	getMetadata(): EngineMetadata;
 }
 ```
 
@@ -47,25 +48,25 @@ To add a new engine (e.g., Deepgram):
 import { TranscriptionEngine } from './base';
 
 export class DeepgramEngine extends TranscriptionEngine {
-  private apiKey: string;
-  
-  constructor(apiKey: string) {
-    super();
-    this.apiKey = apiKey;
-  }
-  
-  async start(stream, config) {
-    // Initialize Deepgram WebSocket connection
-    // Setup event handlers to call emitResult()
-  }
-  
-  async stop() {
-    // Close WebSocket connection
-  }
-  
-  getMetadata() {
-    return { name: 'Deepgram', version: '1.0.0', type: 'api' };
-  }
+	private apiKey: string;
+
+	constructor(apiKey: string) {
+		super();
+		this.apiKey = apiKey;
+	}
+
+	async start(stream, config) {
+		// Initialize Deepgram WebSocket connection
+		// Setup event handlers to call emitResult()
+	}
+
+	async stop() {
+		// Close WebSocket connection
+	}
+
+	getMetadata() {
+		return { name: 'Deepgram', version: '1.0.0', type: 'api' };
+	}
 }
 ```
 
@@ -87,9 +88,9 @@ let engine = new DeepgramEngine(apiKey);
 ```javascript
 // ReVoiceDB with 3 object stores
 db.version(1).stores({
-  sessions: '++id, timestamp, duration, title, mimeType, engineType',
-  audioData: '++id, sessionId',
-  transcripts: '++id, sessionId, text, time'
+	sessions: '++id, timestamp, duration, title, mimeType, engineType',
+	audioData: '++id, sessionId',
+	transcripts: '++id, sessionId, text, time',
 });
 ```
 
@@ -138,12 +139,12 @@ Transcript (text)
 
 **Browser Differences**:
 
-| Aspect | Chrome | Safari | Firefox |
-|--------|--------|--------|---------|
-| MIME Type | audio/webm;codecs=opus | audio/mp4 | audio/webm |
-| MediaRecorder | ✅ | ✅ | ✅ |
-| Web Audio API | ✅ | ✅ (webkit prefix) | ✅ |
-| Stream Cloning | ✅ | ✅ | ✅ |
+| Aspect         | Chrome                 | Safari             | Firefox    |
+| -------------- | ---------------------- | ------------------ | ---------- |
+| MIME Type      | audio/webm;codecs=opus | audio/mp4          | audio/webm |
+| MediaRecorder  | ✅                     | ✅                 | ✅         |
+| Web Audio API  | ✅                     | ✅ (webkit prefix) | ✅         |
+| Stream Cloning | ✅                     | ✅                 | ✅         |
 
 **Dual-Track Audio Approach**:
 
@@ -272,13 +273,13 @@ Current: Single language selector in UI
 ```typescript
 // Create multi-language engine
 export class MultilingualNativeEngine extends NativeEngine {
-  async setLanguage(langCode: string) {
-    this.config.language = langCode;
-    if (this.state === 'listening') {
-      await this.stop();
-      await this.start(this.stream, this.config);
-    }
-  }
+	async setLanguage(langCode: string) {
+		this.config.language = langCode;
+		if (this.state === 'listening') {
+			await this.stop();
+			await this.start(this.stream, this.config);
+		}
+	}
 }
 ```
 
@@ -288,15 +289,15 @@ Example: Deepgram integration
 
 ```typescript
 export class DeepgramEngine extends TranscriptionEngine {
-  private ws: WebSocket;
-  
-  async start(stream, config) {
-    // 1. Get WebSocket URL from Deepgram API
-    // 2. Connect WebSocket
-    // 3. Stream audio chunks to Deepgram
-    // 4. Parse incoming JSON transcriptions
-    // 5. Call emitResult() with results
-  }
+	private ws: WebSocket;
+
+	async start(stream, config) {
+		// 1. Get WebSocket URL from Deepgram API
+		// 2. Connect WebSocket
+		// 3. Stream audio chunks to Deepgram
+		// 4. Parse incoming JSON transcriptions
+		// 5. Call emitResult() with results
+	}
 }
 ```
 
@@ -308,33 +309,37 @@ Example: Download session as WAV/MP3
 import { getSessionAudio, getSessionFullTranscript } from '$lib/db';
 
 export async function exportSession(sessionId: number) {
-  const audio = await getSessionAudio(sessionId);
-  const transcript = await getSessionFullTranscript(sessionId);
-  
-  // Create ZIP file with audio + transcript.txt
-  // Trigger browser download
+	const audio = await getSessionAudio(sessionId);
+	const transcript = await getSessionFullTranscript(sessionId);
+
+	// Create ZIP file with audio + transcript.txt
+	// Trigger browser download
 }
 ```
 
 ## Performance Considerations
 
 ### Transcription Latency
+
 - **Target**: < 200ms (Chrome & Safari)
 - **Achieved**: ~150ms with Web Speech API
 - **Bottleneck**: OS speech engine recognition
 
 ### Visualizer Responsiveness
+
 - **Target**: 60 FPS continuous
 - **Implementation**: `requestAnimationFrame()` loop
 - **Data**: AnalyserNode update rate independent of speech events
 
 ### Storage Efficiency
+
 - **Audio**: WebM/Opus = ~20KB/min of speech
 - **Transcripts**: ~100 bytes per sentence
 - **Metadata**: ~500 bytes per session
 - **Typical Session** (5 min): < 200KB
 
 ### Build Output
+
 - **Production Bundle**: ~150KB (gzipped)
 - **Load Time**: < 2s (cold start)
 - **Runtime Memory**: ~50MB baseline
@@ -342,16 +347,19 @@ export async function exportSession(sessionId: number) {
 ## Security & Privacy
 
 ### Data Locality
+
 - ✅ All data stays in browser's IndexedDB
 - ✅ No server requests for recordings
 - ❌ Web Speech API may use cloud service (browser-controlled)
 
 ### Audio Stream Safety
+
 - ✅ Stream created by browser security model
 - ✅ Microphone permission required per browser policy
 - ✅ No access to other tabs/apps audio
 
 ### Blob Storage
+
 - ✅ IndexedDB respects same-origin policy
 - ✅ No cross-site access to stored audio
 - ✅ Clearing site data removes all recordings
@@ -359,16 +367,19 @@ export async function exportSession(sessionId: number) {
 ## Testing Strategy
 
 ### Unit Tests (Planned)
+
 - Engine implementations
 - Database functions
 - Audio utilities
 
 ### Integration Tests (Planned)
+
 - Full record → transcribe → store workflow
 - Cross-browser audio format handling
 - Session lifecycle management
 
 ### Manual Testing (Current)
+
 1. Record audio in Chrome → verify transcription
 2. Record audio in Safari → verify MP4 format
 3. Playback stored sessions
@@ -379,18 +390,21 @@ export async function exportSession(sessionId: number) {
 ### Roadmap Considerations
 
 **Phase 2 - Multi-Engine Support**
+
 - [ ] Engine selector UI
 - [ ] Deepgram API adapter
 - [ ] AssemblyAI API adapter
 - [ ] Fallback logic (service unavailable)
 
 **Phase 3 - Advanced Features**
+
 - [ ] Real-time speaker diarization
 - [ ] Custom vocabulary training
 - [ ] Real-time translation
 - [ ] Local ML models (WASM)
 
 **Phase 4 - Deployment**
+
 - [ ] Progressive Web App (PWA) support
 - [ ] Offline functionality
 - [ ] Cloud sync option
@@ -406,4 +420,4 @@ ReVoice's modular architecture achieves:
 4. **Extensibility**: Add features with minimal changes
 5. **Privacy**: All processing in user's browser
 
-The `ITranscriptionEngine` interface is the keystone—it enables the entire system to remain agnostic about *how* transcription happens, only *that* it happens.
+The `ITranscriptionEngine` interface is the keystone—it enables the entire system to remain agnostic about _how_ transcription happens, only _that_ it happens.

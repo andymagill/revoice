@@ -1,13 +1,13 @@
 /**
  * Abstract Base Class for Transcription Engines
- * 
+ *
  * All transcription engines must extend this class to implement the
  * ITranscriptionEngine interface. This base class provides:
- * 
+ *
  * - Event management (onResult, onError subscriptions)
  * - State management (idle, listening, processing)
  * - Callback emission utilities
- * 
+ *
  * Concrete implementations should:
  * 1. Initialize their specific transcription service in constructor
  * 2. Implement start() to begin transcription
@@ -15,20 +15,25 @@
  * 4. Call emitResult() when transcription results arrive
  * 5. Call emitError() if errors occur
  * 6. Implement getMetadata() for engine identification
- * 
+ *
  * @example
  * class MyEngine extends TranscriptionEngine {
  *   async start(stream, config) {
  *     // Initialize transcription service
  *   }
- *   
+ *
  *   private onTranscription(text, isFinal) {
  *     this.emitResult({ text, isFinal });
  *   }
  * }
  */
 
-import type { ITranscriptionEngine, TranscriptionResult, EngineConfig, EngineMetadata } from '../types';
+import type {
+	ITranscriptionEngine,
+	TranscriptionResult,
+	EngineConfig,
+	EngineMetadata,
+} from '../types';
 
 export abstract class TranscriptionEngine implements ITranscriptionEngine {
 	/**
@@ -75,7 +80,7 @@ export abstract class TranscriptionEngine implements ITranscriptionEngine {
 
 	/**
 	 * Get the current engine state
-	 * 
+	 *
 	 * @returns Current state: 'idle', 'listening', or 'processing'
 	 */
 	getState(): 'idle' | 'listening' | 'processing' {
@@ -85,7 +90,7 @@ export abstract class TranscriptionEngine implements ITranscriptionEngine {
 	/**
 	 * Protected helper to update engine state
 	 * Called by subclasses when state changes
-	 * 
+	 *
 	 * @protected
 	 * @param state - New state value
 	 */
@@ -95,13 +100,13 @@ export abstract class TranscriptionEngine implements ITranscriptionEngine {
 
 	/**
 	 * Subscribe to transcription results
-	 * 
+	 *
 	 * Callback will be called each time transcription returns a result.
 	 * Results may be interim (mid-word) or final (speaker paused).
-	 * 
+	 *
 	 * @param callback - Function to call with each result
 	 * @returns Unsubscribe function that removes the listener
-	 * 
+	 *
 	 * @example
 	 * const unsub = engine.onResult(result => {
 	 *   console.log(result.text);
@@ -119,13 +124,13 @@ export abstract class TranscriptionEngine implements ITranscriptionEngine {
 
 	/**
 	 * Subscribe to transcription errors
-	 * 
+	 *
 	 * Callback will be called if the engine encounters an error (e.g.,
 	 * "no speech detected", "service unavailable", network errors).
-	 * 
+	 *
 	 * @param callback - Function to call with error details
 	 * @returns Unsubscribe function that removes the listener
-	 * 
+	 *
 	 * @example
 	 * engine.onError(error => {
 	 *   console.error('Transcription failed:', error.message);
@@ -142,7 +147,7 @@ export abstract class TranscriptionEngine implements ITranscriptionEngine {
 	/**
 	 * Protected helper to emit a transcription result to all subscribers
 	 * Called by subclasses when transcription completes
-	 * 
+	 *
 	 * @protected
 	 * @param result - The transcription result to emit
 	 */
@@ -155,7 +160,7 @@ export abstract class TranscriptionEngine implements ITranscriptionEngine {
 	/**
 	 * Protected helper to emit an error to all subscribers
 	 * Called by subclasses when an error occurs
-	 * 
+	 *
 	 * @protected
 	 * @param error - The error to emit
 	 */

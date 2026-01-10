@@ -1,27 +1,27 @@
 /**
  * Core TypeScript interfaces and types for ReVoice
- * 
+ *
  * This module defines the contract for all transcription engines and
  * the data structures used throughout the application.
  */
 
 /**
  * Result returned from a transcription engine
- * 
+ *
  * This interface supports streaming transcription with interim and final results.
- * 
+ *
  * ## Streaming Pattern:
  * Web Speech API emits results as the user speaks:
  * - **Interim results**: Partial transcriptions that update in real-time as speech is recognized
  * - **Final results**: Complete transcriptions after speech pause or completion
- * 
+ *
  * ## Result Tracking:
  * The `resultIndex` field enables deduplication by tracking which speech segment
  * a result belongs to. The Web Speech API returns cumulative result arrays where:
  * - Each speech segment has a unique index
  * - Interim results update the same index as speech continues
  * - Final results mark that index as complete
- * 
+ *
  * ## Usage Example:
  * ```typescript
  * // User says "Hello world"
@@ -29,7 +29,7 @@
  * // Event 2: { text: "Hello world", isFinal: false, resultIndex: 0 }  // Same index, updated
  * // Event 3: { text: "Hello world", isFinal: true, resultIndex: 0 }   // Finalized
  * ```
- * 
+ *
  * @interface TranscriptionResult
  * @property {string} text - The transcribed text content
  * @property {boolean} isFinal - Whether this is final (won't change) or interim (might change)
@@ -45,7 +45,7 @@ export interface TranscriptionResult {
 
 /**
  * Configuration options for a transcription engine
- * 
+ *
  * @interface EngineConfig
  * @property {string} [language] - Language code (e.g., 'en-US', 'fr-FR')
  * @property {boolean} [continuous] - Whether to recognize continuously or stop after silence
@@ -59,13 +59,13 @@ export interface EngineConfig {
 
 /**
  * Standard interface that all transcription engines must implement
- * 
+ *
  * This interface enables pluggable transcription backends. New engines can be
  * added by creating a class that extends TranscriptionEngine (base.ts) and
  * implements these methods. The UI layer remains unchanged.
- * 
+ *
  * @interface ITranscriptionEngine
- * 
+ *
  * @example
  * // Implementing a new engine
  * class DeepgramEngine extends TranscriptionEngine {
@@ -80,7 +80,7 @@ export interface EngineConfig {
 export interface ITranscriptionEngine {
 	/**
 	 * Start transcription with the given audio stream
-	 * 
+	 *
 	 * @param stream - The MediaStream to transcribe (from getUserMedia)
 	 * @param config - Optional engine-specific configuration
 	 * @throws Error if engine is already running or stream is invalid
@@ -89,7 +89,7 @@ export interface ITranscriptionEngine {
 
 	/**
 	 * Stop transcription and clean up resources
-	 * 
+	 *
 	 * Should stop listening, abort any pending operations, and release
 	 * the audio stream. Safe to call even if not started.
 	 */
@@ -97,7 +97,7 @@ export interface ITranscriptionEngine {
 
 	/**
 	 * Get the current state of the engine
-	 * 
+	 *
 	 * @returns 'idle' - Not running
 	 * @returns 'listening' - Waiting for audio input
 	 * @returns 'processing' - Processing audio (final results pending)
@@ -106,13 +106,13 @@ export interface ITranscriptionEngine {
 
 	/**
 	 * Subscribe to transcription results
-	 * 
+	 *
 	 * Calls callback whenever a transcription result is available.
 	 * Results may be interim (mid-sentence) or final (speaker paused).
-	 * 
+	 *
 	 * @param callback - Called with each transcription result
 	 * @returns Unsubscribe function to remove listener
-	 * 
+	 *
 	 * @example
 	 * const unsubscribe = engine.onResult((result) => {
 	 *   console.log(result.text, result.isFinal);
@@ -124,10 +124,10 @@ export interface ITranscriptionEngine {
 
 	/**
 	 * Subscribe to transcription errors
-	 * 
+	 *
 	 * Calls callback if the engine encounters an error during
 	 * recognition (e.g., no speech detected, service error).
-	 * 
+	 *
 	 * @param callback - Called with error details
 	 * @returns Unsubscribe function to remove listener
 	 */
@@ -135,7 +135,7 @@ export interface ITranscriptionEngine {
 
 	/**
 	 * Get metadata about the engine
-	 * 
+	 *
 	 * Returns information like name, version, type, and supported languages.
 	 * Useful for UI display and debugging.
 	 */
@@ -144,7 +144,7 @@ export interface ITranscriptionEngine {
 
 /**
  * Metadata describing a transcription engine
- * 
+ *
  * @interface EngineMetadata
  * @property {string} name - Human-readable engine name (e.g., "Web Speech API")
  * @property {string} version - Semantic version of the engine implementation
@@ -160,10 +160,10 @@ export interface EngineMetadata {
 
 /**
  * Database record for a recording session
- * 
+ *
  * A session represents a single recording/transcription session with metadata
  * about when it was recorded, its duration, and which engine was used.
- * 
+ *
  * @interface Session
  * @property {number} [id] - Auto-increment primary key (auto-generated)
  * @property {number} timestamp - Unix timestamp (ms) when session was created
@@ -185,10 +185,10 @@ export interface Session {
 
 /**
  * Database record for audio data
- * 
+ *
  * Stores the actual binary audio blob for a session in IndexedDB.
  * Separated from Session for storage efficiency.
- * 
+ *
  * @interface AudioData
  * @property {number} [id] - Auto-increment primary key (auto-generated)
  * @property {number} sessionId - Foreign key to Session.id
@@ -204,10 +204,10 @@ export interface AudioData {
 
 /**
  * Database record for a transcript segment
- * 
+ *
  * Stores individual text segments from transcription. Multiple segments
  * per session allow reconstruction of full transcript with timing.
- * 
+ *
  * @interface Transcript
  * @property {number} [id] - Auto-increment primary key (auto-generated)
  * @property {number} sessionId - Foreign key to Session.id
@@ -225,14 +225,14 @@ export interface Transcript {
 
 /**
  * Audio format configuration for recording
- * 
+ *
  * Encapsulates browser-specific audio format information including
  * MIME type and codec details.
- * 
+ *
  * @interface AudioFormat
  * @property {string} mimeType - Full MIME type string (e.g., "audio/webm;codecs=opus")
  * @property {string[]} [codecs] - Optional list of codec names used
- * 
+ *
  * @example
  * const format = getSupportedAudioFormat();
  * // Chrome: { mimeType: 'audio/webm;codecs=opus', codecs: ['opus'] }

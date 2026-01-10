@@ -5,44 +5,44 @@
 
 	/**
 	 * CompatibilityShield Component
-	 * 
+	 *
 	 * A guard component that checks browser API compatibility before rendering child content.
 	 * If critical APIs are missing (Web Speech, MediaRecorder, Web Audio, IndexedDB), displays
 	 * a modal warning with the list of missing features and browser-specific notes.
-	 * 
+	 *
 	 * **Purpose**: Prevent silent failures in unsupported browsers by informing users upfront.
-	 * 
+	 *
 	 * **Features**:
 	 * - Automatically detects browser and checks all required APIs
 	 * - Displays visual checkmarks/crosses for each API
 	 * - Shows browser-specific warnings (e.g., "Safari requires user gesture")
 	 * - Allows users to continue anyway (may not work properly)
 	 * - Uses modal overlay to prevent interaction with broken app
-	 * 
+	 *
 	 * **Usage**:
 	 * ```svelte
 	 * <CompatibilityShield>
 	 *   <MainApp />
 	 * </CompatibilityShield>
 	 * ```
-	 * 
+	 *
 	 * **Supported Browsers**:
 	 * - Chrome/Chromium 25+ (Web Speech API)
 	 * - Safari 14.1+ (iOS 14.5+, macOS 11.3+)
 	 * - Firefox 25+ (Web Speech API not stable)
-	 * 
+	 *
 	 * **API Requirements** (all must be present):
 	 * 1. Web Speech API (for transcription)
 	 * 2. MediaRecorder API (for audio recording)
 	 * 3. Web Audio API (for visualization)
 	 * 4. IndexedDB (for persistent storage)
-	 * 
+	 *
 	 * **Lifecycle**:
 	 * 1. Mount: check APIs via `checkApiSupport()`
 	 * 2. If missing APIs: show warning modal
 	 * 3. User can dismiss modal with "Continue Anyway" button
 	 * 4. Always render children (whether warning shown or not)
-	 * 
+	 *
 	 * **Modal Behavior**:
 	 * - Blocks interaction with app until dismissed
 	 * - Shows semi-transparent dark overlay
@@ -69,7 +69,7 @@
 		mediaRecorder: false,
 		webAudio: false,
 		indexedDB: false,
-		allSupported: false
+		allSupported: false,
 	});
 
 	/**
@@ -90,13 +90,13 @@
 
 	/**
 	 * Initialize compatibility check on mount
-	 * 
+	 *
 	 * This lifecycle hook:
 	 * 1. Checks all required APIs using checkApiSupport()
 	 * 2. Detects browser type for user-friendly messaging
 	 * 3. Retrieves browser-specific notes/caveats
 	 * 4. Shows warning modal if any API is missing
-	 * 
+	 *
 	 * @see {checkApiSupport} in $lib/compat.ts
 	 * @see {getBrowserName} in $lib/compat.ts
 	 * @see {getBrowserSpecificNotes} in $lib/compat.ts

@@ -18,13 +18,13 @@ ReVoice is designed to demonstrate the capabilities of modern browser APIs for r
 
 ## Tech Stack
 
-| Component | Technology | Purpose |
-|-----------|-----------|---------|
-| Framework | SvelteKit | Fast, reactive UI components |
-| Build Tool | Vite | Modern, zero-config bundler |
-| Styling | Tailwind CSS | Utility-first CSS framework |
-| Database | Dexie.js | IndexedDB abstraction layer |
-| APIs | Web Speech, MediaRecorder, Web Audio | Native browser transcription & audio handling |
+| Component  | Technology                           | Purpose                                       |
+| ---------- | ------------------------------------ | --------------------------------------------- |
+| Framework  | SvelteKit                            | Fast, reactive UI components                  |
+| Build Tool | Vite                                 | Modern, zero-config bundler                   |
+| Styling    | Tailwind CSS                         | Utility-first CSS framework                   |
+| Database   | Dexie.js                             | IndexedDB abstraction layer                   |
+| APIs       | Web Speech, MediaRecorder, Web Audio | Native browser transcription & audio handling |
 
 ## Project Structure
 
@@ -94,18 +94,19 @@ The core innovation of ReVoice is its **pluggable engine architecture**. All tra
 
 ```typescript
 interface ITranscriptionEngine {
-  start(stream: MediaStream, config?: EngineConfig): Promise<void>;
-  stop(): Promise<void>;
-  getState(): 'idle' | 'listening' | 'processing';
-  onResult(callback: (result: TranscriptionResult) => void): () => void;
-  onError(callback: (error: Error) => void): () => void;
-  getMetadata(): EngineMetadata;
+	start(stream: MediaStream, config?: EngineConfig): Promise<void>;
+	stop(): Promise<void>;
+	getState(): 'idle' | 'listening' | 'processing';
+	onResult(callback: (result: TranscriptionResult) => void): () => void;
+	onError(callback: (error: Error) => void): () => void;
+	getMetadata(): EngineMetadata;
 }
 ```
 
 #### Current Implementation
 
 **NativeEngine** (`src/lib/engines/native.ts`)
+
 - Uses `webkitSpeechRecognition` (available in Chrome, Edge, Safari)
 - Continuous mode with interim results
 - Supports multiple languages
@@ -114,6 +115,7 @@ interface ITranscriptionEngine {
 #### Future Extensibility
 
 New engines can be added by:
+
 1. Creating a new class extending `TranscriptionEngine`
 2. Implementing the required methods
 3. Registering via the `TranscriptionProvider`
@@ -127,9 +129,9 @@ Example: `DeepgramEngine`, `AssemblyAIEngine`, `LocalMLEngine`
 
 ```javascript
 db.version(1).stores({
-  sessions: '++id, timestamp, duration, title, mimeType, engineType',
-  audioData: '++id, sessionId',
-  transcripts: '++id, sessionId, text, time'
+	sessions: '++id, timestamp, duration, title, mimeType, engineType',
+	audioData: '++id, sessionId',
+	transcripts: '++id, sessionId, text, time',
 });
 ```
 
@@ -177,24 +179,28 @@ These are handled transparently in the `NativeEngine` and `audio.ts` utilities.
 ## Component Overview
 
 ### CompatibilityShield
+
 - **Purpose**: API support detection and user warning
 - **Props**: `children` (slot content)
 - **Behavior**: Shows modal if required APIs are missing
 - **File**: `src/lib/components/CompatibilityShield.svelte`
 
 ### EqVisualizer
+
 - **Purpose**: Canvas-based 32-bar frequency analyzer
 - **Props**: `audioContext`, `analyser`, `barCount`, `height`, `barColor`
 - **Behavior**: Real-time frequency visualization (updates at 60 FPS)
 - **File**: `src/lib/components/EqVisualizer.svelte`
 
 ### TranscriptionProvider
+
 - **Purpose**: Inject transcription engine via Svelte context
 - **Props**: `engine` (ITranscriptionEngine), `children`
 - **Usage**: Wrap page components to access engine
 - **File**: `src/lib/components/TranscriptionProvider.svelte`
 
 ### +layout.svelte (Root Layout)
+
 - **Purpose**: Main application shell
 - **Sections**:
   - Sidebar with session history
@@ -204,6 +210,7 @@ These are handled transparently in the `NativeEngine` and `audio.ts` utilities.
 - **Features**: Collapsible sidebar, audio playback, session deletion
 
 ### +page.svelte (Dashboard)
+
 - **Purpose**: Recording interface and transcript display
 - **Sections**:
   - Recording controls (Record/Pause/Stop)
@@ -290,18 +297,20 @@ const cloned = cloneMediaStream(originalStream);
 const recorder = createMediaRecorder(stream);
 
 // Get file extension from MIME type
-const ext = getAudioFileExtension('audio/webm');  // '.webm'
+const ext = getAudioFileExtension('audio/webm'); // '.webm'
 ```
 
 ## Browser Support & Testing
 
 ### Desktop
+
 - ✅ Chrome/Chromium 90+
 - ✅ Firefox 88+ (with SpeechRecognition flag enabled)
 - ✅ Safari 14+
 - ✅ Edge 90+
 
 ### Mobile
+
 - ✅ iOS Safari 14+
 - ✅ Android Chrome
 
@@ -327,6 +336,7 @@ pnpm run build
 ```
 
 **Configuration**:
+
 - Build command: `pnpm run build`
 - Build output directory: `build`
 - Root directory: `/`
@@ -334,6 +344,7 @@ pnpm run build
 ### Other Static Hosts
 
 The `build/` directory can be deployed to:
+
 - Vercel
 - Netlify
 - GitHub Pages
@@ -357,21 +368,21 @@ The `build/` directory can be deployed to:
 import { TranscriptionEngine } from './base';
 
 export class MyEngine extends TranscriptionEngine {
-  async start(stream: MediaStream, config?: EngineConfig): Promise<void> {
-    // Initialize your service
-  }
+	async start(stream: MediaStream, config?: EngineConfig): Promise<void> {
+		// Initialize your service
+	}
 
-  async stop(): Promise<void> {
-    // Cleanup
-  }
+	async stop(): Promise<void> {
+		// Cleanup
+	}
 
-  getMetadata() {
-    return {
-      name: 'My Service',
-      version: '1.0.0',
-      type: 'api'
-    };
-  }
+	getMetadata() {
+		return {
+			name: 'My Service',
+			version: '1.0.0',
+			type: 'api',
+		};
+	}
 }
 ```
 
@@ -389,14 +400,16 @@ let engine = new MyEngine();
 ### Debugging Audio Issues
 
 1. **Check MIME type support**:
+
    ```javascript
    console.log(getSupportedAudioFormat());
    ```
 
 2. **Monitor transcription events**:
+
    ```javascript
-   engine.onResult(result => console.log('Transcription:', result));
-   engine.onError(error => console.error('Error:', error));
+   engine.onResult((result) => console.log('Transcription:', result));
+   engine.onError((error) => console.error('Error:', error));
    ```
 
 3. **Inspect IndexedDB**:
@@ -409,13 +422,13 @@ Edit `tailwind.config.js` to customize colors, fonts, spacing:
 
 ```javascript
 export default {
-  theme: {
-    extend: {
-      colors: {
-        'revoice-blue': '#3b82f6'
-      }
-    }
-  }
+	theme: {
+		extend: {
+			colors: {
+				'revoice-blue': '#3b82f6',
+			},
+		},
+	},
 };
 ```
 
@@ -426,21 +439,25 @@ Development server supports hot module replacement—changes to `.svelte` files 
 ## Troubleshooting
 
 ### "Web Speech API not supported"
+
 - Ensure browser is Chrome, Edge, or Safari
 - Check browser privacy settings for microphone access
 - Try a different browser
 
 ### "No audio captured"
+
 - Verify microphone is working and permissions are granted
 - Check DevTools Console for errors
 - Try recording in another application first
 
 ### "Transcript empty"
+
 - Wait 1-2 seconds for engine to process speech
 - Speak clearly and at normal pace
 - Check browser's speech recognition language settings
 
 ### Build fails
+
 ```bash
 # Clear cache and reinstall
 rm -r node_modules .svelte-kit
@@ -451,6 +468,7 @@ pnpm run build
 ## Future Roadmap
 
 ### Phase 2
+
 - [ ] 3rd-party transcription engine adapters (Deepgram, AssemblyAI)
 - [ ] Multiple language support with language selector
 - [ ] Export transcripts to PDF/DOCX
@@ -458,6 +476,7 @@ pnpm run build
 - [ ] Batch upload to cloud storage
 
 ### Phase 3
+
 - [ ] Local ML model for on-device transcription (Transformers.js)
 - [ ] Custom vocabulary/terms support
 - [ ] Real-time translation
@@ -471,6 +490,7 @@ MIT (See LICENSE file)
 ## Support
 
 For issues, questions, or feature requests:
+
 1. Check existing GitHub issues
 2. Create a detailed bug report with:
    - Browser and OS version

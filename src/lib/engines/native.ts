@@ -1,39 +1,39 @@
 /**
  * Native Web Speech API Transcription Engine
- * 
+ *
  * This is the default, built-in transcription engine for ReVoice.
  * It uses the Web Speech API (webkitSpeechRecognition) available in
  * Chrome, Edge, and Safari for fast, low-latency transcription.
- * 
+ *
  * Features:
  * - Continuous mode: recognizes until explicitly stopped
  * - Interim results: returns partial text while user is still speaking
  * - Multilingual support: supports ~100+ languages via OS speech engine
  * - No external dependencies: works offline with system speech recognition
- * 
+ *
  * Browser Support:
  * - ✅ Chrome/Chromium 25+
  * - ✅ Safari 14.1+
  * - ✅ Edge 79+
  * - ⚠️  Firefox (behind flag)
- * 
+ *
  * Safari-Specific Notes:
  * - MUST be called from within a click handler (user gesture requirement)
  * - AudioContext also requires user gesture
  * - Uses audio/mp4 format instead of WebM
- * 
+ *
  * @example
  * const engine = new NativeEngine();
  * const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
- * 
+ *
  * engine.onResult(result => {
  *   console.log(result.text, result.isFinal);
  * });
- * 
+ *
  * engine.onError(error => {
  *   console.error('Speech recognition error:', error);
  * });
- * 
+ *
  * await engine.start(stream, { language: 'en-US' });
  * // ...
  * await engine.stop();
@@ -64,10 +64,10 @@ export class NativeEngine extends TranscriptionEngine {
 
 	/**
 	 * Constructor: Initialize the Web Speech API
-	 * 
+	 *
 	 * Throws an error if the Web Speech API is not available in the browser.
 	 * This is a synchronous operation.
-	 * 
+	 *
 	 * @throws Error if Web Speech API not supported
 	 */
 	constructor() {
@@ -77,13 +77,13 @@ export class NativeEngine extends TranscriptionEngine {
 
 	/**
 	 * Initialize the Web Speech API recognition object
-	 * 
+	 *
 	 * Sets up event handlers for:
 	 * - onstart: Fired when recognition begins listening
 	 * - onresult: Fired when transcription results arrive
 	 * - onerror: Fired when recognition encounters an error
 	 * - onend: Fired when recognition stops
-	 * 
+	 *
 	 * @private
 	 * @throws Error if Web Speech API not supported
 	 */
@@ -111,25 +111,25 @@ export class NativeEngine extends TranscriptionEngine {
 		this.recognition.onresult = (event: any) => {
 			/**
 			 * STREAMING TRANSCRIPTION PATTERN
-			 * 
+			 *
 			 * The Web Speech API emits `onresult` events as the user speaks. Each event contains:
 			 * - `event.results`: Cumulative array of all speech results from session start
 			 * - `event.resultIndex`: Starting index of new/updated results in this event
-			 * 
+			 *
 			 * ## Problem:
 			 * Without tracking, emitting every result in the array causes duplicates:
 			 * - Same phrases appear multiple times (interim → interim → final)
 			 * - UI shows: "Hello", "Hello world", "Hello world" (3 separate entries)
-			 * 
+			 *
 			 * ## Solution:
 			 * Track which results have been finalized using `lastResultIndex`.
 			 * Only emit:
 			 * - New results (index >= lastResultIndex)
 			 * - Updated interim results (index < lastResultIndex but !isFinal)
-			 * 
+			 *
 			 * This ensures interim results update in place, and final results are emitted once.
 			 */
-			
+
 			// Process results starting from last processed index
 			for (let i = event.resultIndex; i < event.results.length; i++) {
 				const result = event.results[i];
@@ -148,7 +148,7 @@ export class NativeEngine extends TranscriptionEngine {
 						text: transcript,
 						isFinal: isFinal,
 						confidence,
-						resultIndex: i
+						resultIndex: i,
 					});
 				}
 
@@ -178,20 +178,20 @@ export class NativeEngine extends TranscriptionEngine {
 
 	/**
 	 * Start transcription on the given audio stream
-	 * 
+	 *
 	 * Begins listening to the audio stream and emitting transcription results.
 	 * Can optionally apply configuration like language code.
-	 * 
+	 *
 	 * Important: In Safari, this MUST be called from within a click handler
 	 * or other user gesture handler due to browser security restrictions.
-	 * 
+	 *
 	 * @param stream - The MediaStream to transcribe (from getUserMedia)
 	 * @param config - Optional engine configuration
 	 * @param config.language - Language code (e.g., 'en-US', 'fr-FR')
 	 * @param config.continuous - Whether to recognize continuously (default: true)
 	 * @param config.interimResults - Whether to return interim results (default: true)
 	 * @throws Error if engine is already running
-	 * 
+	 *
 	 * @example
 	 * const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 	 * await engine.start(stream, { language: 'en-US' });
@@ -232,10 +232,10 @@ export class NativeEngine extends TranscriptionEngine {
 
 	/**
 	 * Stop transcription and clean up resources
-	 * 
+	 *
 	 * Stops listening, releases the audio stream, and transitions to idle state.
 	 * Safe to call even if not currently listening.
-	 * 
+	 *
 	 * @returns Promise that resolves when stopped (immediately)
 	 */
 	async stop(): Promise<void> {
@@ -260,9 +260,9 @@ export class NativeEngine extends TranscriptionEngine {
 
 	/**
 	 * Get metadata about this engine
-	 * 
+	 *
 	 * Returns information for display in the UI and logging.
-	 * 
+	 *
 	 * @returns Engine metadata object
 	 */
 	getMetadata(): EngineMetadata {
@@ -279,10 +279,10 @@ export class NativeEngine extends TranscriptionEngine {
 				'it-IT',
 				'ja-JP',
 				'zh-CN',
-				'pt-BR'
+				'pt-BR',
 				// Note: Actual support depends on browser and OS
 				// Full list available at: https://www.w3.org/TR/speech-api/
-			]
+			],
 		};
 	}
 }
