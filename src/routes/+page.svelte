@@ -434,7 +434,16 @@
 		{#if showClearConfirm}
 			<div
 				class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+				role="button"
+				tabindex="0"
+				aria-label="Close dialog"
 				onclick={() => (showClearConfirm = false)}
+				onkeydown={(e) => {
+					if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') {
+						e.preventDefault();
+						showClearConfirm = false;
+					}
+				}}
 			>
 				<Card class="w-full max-w-sm mx-4" onclick={(e) => e.stopPropagation()}>
 					<CardHeader>
