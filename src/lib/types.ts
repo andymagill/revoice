@@ -8,15 +8,39 @@
 /**
  * Result returned from a transcription engine
  * 
+ * This interface supports streaming transcription with interim and final results.
+ * 
+ * ## Streaming Pattern:
+ * Web Speech API emits results as the user speaks:
+ * - **Interim results**: Partial transcriptions that update in real-time as speech is recognized
+ * - **Final results**: Complete transcriptions after speech pause or completion
+ * 
+ * ## Result Tracking:
+ * The `resultIndex` field enables deduplication by tracking which speech segment
+ * a result belongs to. The Web Speech API returns cumulative result arrays where:
+ * - Each speech segment has a unique index
+ * - Interim results update the same index as speech continues
+ * - Final results mark that index as complete
+ * 
+ * ## Usage Example:
+ * ```typescript
+ * // User says "Hello world"
+ * // Event 1: { text: "Hello", isFinal: false, resultIndex: 0 }
+ * // Event 2: { text: "Hello world", isFinal: false, resultIndex: 0 }  // Same index, updated
+ * // Event 3: { text: "Hello world", isFinal: true, resultIndex: 0 }   // Finalized
+ * ```
+ * 
  * @interface TranscriptionResult
  * @property {string} text - The transcribed text content
  * @property {boolean} isFinal - Whether this is final (won't change) or interim (might change)
  * @property {number} [confidence] - Optional confidence score (0-1)
+ * @property {number} [resultIndex] - Index of the speech result for tracking updates and preventing duplicates
  */
 export interface TranscriptionResult {
 	text: string;
 	isFinal: boolean;
 	confidence?: number;
+	resultIndex?: number;
 }
 
 /**

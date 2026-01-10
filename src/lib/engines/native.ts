@@ -109,28 +109,57 @@ export class NativeEngine extends TranscriptionEngine {
 
 		// Event handler: Transcription results arrived
 		this.recognition.onresult = (event: any) => {
-			let interimTranscript = '';
-			let isFinal = false;
-
-			// Process each result in the event
-			// Results array grows incrementally as user speaks
+			/**
+			 * STREAMING TRANSCRIPTION PATTERN
+			 * 
+			 * The Web Speech API emits `onresult` events as the user speaks. Each event contains:
+			 * - `event.results`: Cumulative array of all speech results from session start
+			 * - `event.resultIndex`: Starting index of new/updated results in this event
+			 * 
+			 * ## Problem:
+			 * Without tracking, emitting every result in the array causes duplicates:
+			 * - Same phrases appear multiple times (interim → interim → final)
+			 * - UI shows: "Hello", "Hello world", "Hello world" (3 separate entries)
+			 * 
+			 * ## Solution:
+			 * Track which results have been finalized using `lastResultIndex`.
+			 * Only emit:
+			 * - New results (index >= lastResultIndex)
+			 * - Updated interim results (index < lastResultIndex but !isFinal)
+			 * 
+			 * This ensures interim results update in place, and final results are emitted once.
+			 */
+			
+			// Process results starting from last processed index
 			for (let i = event.resultIndex; i < event.results.length; i++) {
-				const transcript = event.results[i][0].transcript;
-				const confidence = event.results[i][0].confidence;
+				const result = event.results[i];
+				const transcript = result[0].transcript;
+				const confidence = result[0].confidence;
+				const isFinal = result.isFinal;
 
-				// Check if this result is final (speech was followed by silence)
-				if (event.results[i].isFinal) {
-					isFinal = true;
-				} else {
-					interimTranscript += transcript;
+				/**
+				 * EMISSION LOGIC:
+				 * - Emit if result is new (i >= lastResultIndex)
+				 * - Emit if result is interim (!isFinal) to allow real-time updates
+				 * - Skip if result is final but already processed (prevents duplicates)
+				 */
+				if (i >= this.lastResultIndex || !isFinal) {
+					this.emitResult({
+						text: transcript,
+						isFinal: isFinal,
+						confidence,
+						resultIndex: i
+					});
 				}
 
-				// Emit result for this phrase
-				this.emitResult({
-					text: transcript,
-					isFinal: event.results[i].isFinal,
-					confidence
-				});
+				/**
+				 * INDEX MANAGEMENT:
+				 * When a result becomes final, advance lastResultIndex past it.
+				 * This marks the result as processed and prevents re-emission.
+				 */
+				if (isFinal) {
+					this.lastResultIndex = i + 1;
+				}
 			}
 		};
 

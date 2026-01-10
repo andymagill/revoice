@@ -17,7 +17,39 @@
 
 	let isRecording: boolean = $state(false);
 	let isPaused: boolean = $state(false);
-	let transcript: TranscriptionResult[] = $state([]);
+	
+	/**
+	 * STREAMING TRANSCRIPTION STATE PATTERN
+	 * 
+	 * Instead of storing all results (interim + final) in a single array,
+	 * we separate state into two distinct categories:
+	 * 
+	 * 1. finalResults: Array of completed transcriptions
+	 *    - Only contains finalized speech segments
+	 *    - Never changes once added
+	 *    - Displayed as chat-like messages (right-aligned)
+	 * 
+	 * 2. currentInterim: Single interim result that updates in real-time
+	 *    - Represents what's currently being spoken
+	 *    - Updates as speech recognition processes audio
+	 *    - Replaced with null when finalized
+	 *    - Displayed as temporary preview (left-aligned, semi-transparent)
+	 * 
+	 * ## Benefits:
+	 * - No duplicate entries in UI (old problem: "Hello", "Hello world", "Hello world")
+	 * - Clean visual progression: interim updates → becomes final
+	 * - Efficient re-renders (only current interim changes, finals are immutable)
+	 * - Clear separation of temporary vs permanent transcriptions
+	 * 
+	 * ## Example Flow:
+	 * User says "Hello world":
+	 * 1. currentInterim = { text: "Hello", isFinal: false }
+	 * 2. currentInterim = { text: "Hello world", isFinal: false }  // Updates in place
+	 * 3. finalResults.push({ text: "Hello world", isFinal: true }) // Added to finals
+	 *    currentInterim = null                                       // Cleared
+	 */
+	let finalResults: TranscriptionResult[] = $state([]);
+	let currentInterim: TranscriptionResult | null = $state(null);
 	let recordingTime: number = $state(0);
 	let sessionId: number | null = null;
 	let showClearConfirm: boolean = $state(false);
@@ -92,11 +124,43 @@
 				await engine.start(stream);
 
 				const unsubscribeResult = engine.onResult((result: TranscriptionResult) => {
-					// Only process results if not paused
-					if (!isPaused) {
-						transcript = [...transcript, result];
-						if (result.isFinal && sessionId) {
+				/**
+				 * RESULT HANDLER PATTERN
+				 * 
+				 * This handler receives transcription results from the engine and manages
+				 * the state transition from interim → final results.
+				 * 
+				 * ## State Transitions:
+				 * 
+				 * INTERIM RESULTS (isFinal = false):
+				 * - Replace currentInterim with the new result
+				 * - This creates an "updating in place" effect in the UI
+				 * - Not persisted to database (only shown in live view)
+				 * 
+				 * FINAL RESULTS (isFinal = true):
+				 * - Append to finalResults array (immutable pattern)
+				 * - Clear currentInterim (it's now finalized)
+				 * - Persist to database for long-term storage
+				 * 
+				 * ## Why This Works:
+				 * The engine (NativeEngine) ensures each result is emitted only once,
+				 * with interim results updating and final results marking completion.
+				 * This handler simply routes results to the appropriate state container.
+				 */
+				
+				// Only process results if not paused
+				if (!isPaused) {
+					if (result.isFinal) {
+						// Add final result to the immutable list
+						finalResults = [...finalResults, result];
+						// Clear interim result since it's now final
+						currentInterim = null;
+						// Persist final result to database
+						if (sessionId) {
 							storeTranscript(sessionId, result.text, Date.now() - (startTime || 0), true);
+						}
+					} else {
+						// Update current interim result (replaces previous interim)
 						}
 					}
 				});
@@ -149,7 +213,8 @@
 			// Clear all recording state
 			isRecording = false;
 			isPaused = false;
-			transcript = [];
+			finalResults = [];
+			currentInterim = null;
 			recordingTime = 0;
 			analyser = null;
 			sessionId = null;
@@ -375,26 +440,64 @@
 				<CardTitle class="text-lg">Transcript</CardTitle>
 			</CardHeader>
 			<CardContent>
-				{#if transcript.length === 0}
-					<p class="text-muted-foreground text-center py-8">No transcription yet. Start recording to begin.</p>
-				{:else}
-					<div class="space-y-3">
-						{#each transcript as item, idx (idx)}
-							<div class="flex {item.isFinal ? 'justify-end' : 'justify-start'}">
-								<div
-									class="{item.isFinal
-										? 'bg-primary text-primary-foreground'
-										: 'bg-accent/10 text-foreground'} rounded-lg px-4 py-2 max-w-xs"
-								>
+			<!--
+				DISPLAY RENDERING PATTERN
+				
+				This component renders transcription results in a chat-like interface:
+				
+				1. FINAL RESULTS (right-aligned, primary color, solid):
+				   - Completed transcriptions that won't change
+				   - Each rendered as a separate message bubble
+				   - Visually distinct as "committed" transcriptions
+				
+				2. CURRENT INTERIM (left-aligned, muted color, semi-transparent):
+				   - Live preview of what's being spoken
+				   - Updates in place as speech recognition progresses
+				   - Visual feedback: "This is still being processed"
+				   - Disappears when finalized (becomes a final result)
+				
+				Visual Hierarchy:
+				- Opacity difference (100% vs 70%) indicates confidence
+				- Alignment (right vs left) shows status
+				- Color scheme differentiates temporary vs permanent
+			-->
+			{#if finalResults.length === 0 && !currentInterim}
+				<p class="text-muted-foreground text-center py-8">No transcription yet. Start recording to begin.</p>
+			{:else}
+				<div class="space-y-3">
+					<!-- FINAL RESULTS: Immutable list of completed transcriptions -->
+						{#each finalResults as item, idx (idx)}
+							<div class="flex justify-end">
+								<div class="bg-primary text-primary-foreground rounded-lg px-4 py-2 max-w-xs">
 									<p class="text-sm">{item.text}</p>
 									{#if item.confidence !== undefined}
-										<p class="text-xs {item.isFinal ? 'text-primary-foreground/70' : 'text-muted-foreground'} mt-1">
+										<p class="text-xs text-primary-foreground/70 mt-1">
 											Confidence: {(item.confidence * 100).toFixed(0)}%
 										</p>
 									{/if}
 								</div>
 							</div>
 						{/each}
+						
+						<!-- 
+						CURRENT INTERIM RESULT:
+						Only one interim result exists at any time (not an array).
+						It updates in place as the user speaks, creating a "typewriter" effect.
+						Once finalized, it moves to the finalResults array above.
+						The opacity-70 class provides visual feedback that this is temporary.
+					-->
+						{#if currentInterim}
+							<div class="flex justify-start">
+								<div class="bg-accent/10 text-foreground rounded-lg px-4 py-2 max-w-xs opacity-70">
+									<p class="text-sm">{currentInterim.text}</p>
+									{#if currentInterim.confidence !== undefined}
+										<p class="text-xs text-muted-foreground mt-1">
+											Confidence: {(currentInterim.confidence * 100).toFixed(0)}%
+										</p>
+									{/if}
+								</div>
+							</div>
+						{/if}
 					</div>
 				{/if}
 			</CardContent>
