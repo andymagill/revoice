@@ -7,9 +7,14 @@
 		"dev": "vite dev",
 		"build": "vite build",
 		"preview": "vite preview",
-		"prepare": "svelte-kit sync || echo ''",
+		"prepare": "husky",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./jsconfig.json",
-		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./jsconfig.json --watch"
+		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./jsconfig.json --watch",
+		"format": "prettier --write .",
+		"format:check": "prettier --check ."
+	},
+	"lint-staged": {
+		"*.{js,ts,svelte,json,md,css,html}": "prettier --write"
 	},
 	"devDependencies": {
 		"@lucide/svelte": "^0.562.0",
@@ -22,8 +27,12 @@
 		"bits-ui": "^2.15.4",
 		"clsx": "^2.1.1",
 		"dexie": "^4.2.1",
+		"husky": "^9.1.7",
+		"lint-staged": "^16.2.7",
 		"lucide-svelte": "^0.562.0",
 		"postcss": "^8.5.6",
+		"prettier": "^3.7.4",
+		"prettier-plugin-svelte": "^3.4.1",
 		"shadcn-svelte": "^1.1.0",
 		"svelte": "^5.45.6",
 		"svelte-check": "^4.3.4",
