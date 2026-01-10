@@ -7,6 +7,7 @@
 	import TranscriptionProvider from '$lib/components/TranscriptionProvider.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '$lib/components/ui/card/index.js';
+	import { Mic } from 'lucide-svelte';
 	import type { TranscriptionResult } from '$lib/types';
 
 	/**
@@ -19,6 +20,8 @@
 	let transcript: TranscriptionResult[] = $state([]);
 	let recordingTime: number = $state(0);
 	let sessionId: number | null = null;
+	let showClearConfirm: boolean = $state(false);
+	let suppressTranscriptionErrors: boolean = false;
 
 	let mediaRecorder: MediaRecorder | null = null;
 	let audioChunks: Blob[] = [];
@@ -89,13 +92,21 @@
 				await engine.start(stream);
 
 				const unsubscribeResult = engine.onResult((result: TranscriptionResult) => {
-					transcript = [...transcript, result];
-					if (result.isFinal && sessionId) {
-						storeTranscript(sessionId, result.text, Date.now() - (startTime || 0), true);
+					// Only process results if not paused
+					if (!isPaused) {
+						transcript = [...transcript, result];
+						if (result.isFinal && sessionId) {
+							storeTranscript(sessionId, result.text, Date.now() - (startTime || 0), true);
+						}
 					}
 				});
 
 				const unsubscribeError = engine.onError((error) => {
+					// Suppress errors when paused since the recognition times out naturally
+					if (suppressTranscriptionErrors) {
+						console.debug('Suppressed error during pause:', error.message);
+						return;
+					}
 					console.error('Transcription error:', error);
 				});
 			}
@@ -110,7 +121,12 @@
 		}
 	}
 
-	async function stopRecording() {
+	async function confirmClearRecording() {
+		showClearConfirm = false;
+		await clearRecording();
+	}
+
+	async function clearRecording() {
 		if (!isRecording) return;
 
 		try {
@@ -130,23 +146,53 @@
 				clearInterval(timerInterval);
 			}
 
+			// Clear all recording state
 			isRecording = false;
 			isPaused = false;
+			transcript = [];
+			recordingTime = 0;
+			analyser = null;
+			sessionId = null;
 		} catch (error) {
-			console.error('Failed to stop recording:', error);
+			console.error('Failed to clear recording:', error);
 		}
 	}
 
-	function pauseRecording() {
+	async function pauseRecording() {
 		if (!isRecording || !mediaRecorder) return;
-		mediaRecorder.pause();
-		isPaused = true;
+		try {
+			mediaRecorder.pause();
+			isPaused = true;
+			suppressTranscriptionErrors = true;
+			
+			// Stop the timer when paused
+			if (timerInterval) {
+				clearInterval(timerInterval);
+				timerInterval = null;
+			}
+			
+			console.log('Recording paused');
+		} catch (error) {
+			console.error('Error pausing recording:', error);
+		}
 	}
 
-	function resumeRecording() {
+	async function resumeRecording() {
 		if (!isRecording || !mediaRecorder) return;
-		mediaRecorder.resume();
-		isPaused = false;
+		try {
+			mediaRecorder.resume();
+			suppressTranscriptionErrors = false;
+			
+			// Restart timer
+			timerInterval = setInterval(() => {
+				recordingTime = Date.now() - (startTime || 0);
+			}, 100);
+			
+			isPaused = false;
+			console.log('Recording resumed');
+		} catch (error) {
+			console.error('Error resuming recording:', error);
+		}
 	}
 
 	function formatTime(ms: number): string {
@@ -156,70 +202,172 @@
 		return `${minutes}:${secs.toString().padStart(2, '0')}`;
 	}
 
+	async function handleMicClick() {
+		if (!isRecording) {
+			// Start recording
+			await startRecording();
+		} else if (isPaused) {
+			// Resume recording
+			await resumeRecording();
+		} else {
+			// Pause recording
+			await pauseRecording();
+		}
+	}
+
 	let startTime: number | null = null;
 </script>
 
 <TranscriptionProvider {engine}>
-	<div class="max-w-4xl mx-auto space-y-6">
-		<!-- Recording Controls -->
-		<Card>
-			<CardHeader>
-				<div class="flex items-center justify-between">
-					<div>
-						<CardTitle>Live Transcription</CardTitle>
-						<CardDescription>Record your voice and see real-time transcription</CardDescription>
-					</div>
-					<div class="text-3xl font-mono font-bold text-primary">
+	<div class="max-w-6xl mx-auto space-y-6 px-4">
+		<!-- Recording Controls Section -->
+		<div class="lg:flex lg:gap-6 lg:items-start">
+			<!-- Left Column: Centered Controls -->
+			<div class="flex-1 flex flex-col items-center justify-center gap-4 py-8 lg:py-0">
+				<!-- Large Microphone Button with Animation -->
+				<div class="relative">
+					<!-- Rotating/Throbbing border when recording -->
+					{#if isRecording && !isPaused}
+						<div 
+							class="absolute inset-0 rounded-full border-2 border-transparent border-t-red-500 border-r-red-500 pointer-events-none" 
+							style="animation: spin 2s linear infinite;"
+						></div>
+						<div 
+							class="absolute inset-0 rounded-full border-2 border-red-500 opacity-20 pointer-events-none" 
+							style="animation: throb 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;"
+						></div>
+					{/if}
+
+					<!-- Main Button Circle -->
+					<button
+						onclick={handleMicClick}
+						class="
+							w-40 h-40 rounded-full flex items-center justify-center
+							transition-all duration-300 transform
+							{isRecording && !isPaused
+								? 'bg-red-500 text-white shadow-xl shadow-red-500/50 hover:shadow-2xl hover:shadow-red-500/70'
+								: isRecording && isPaused
+									? 'bg-amber-500 text-white shadow-xl shadow-amber-500/50 hover:shadow-2xl hover:amber-500/70'
+									: 'bg-blue-600 text-white hover:bg-blue-700 hover:scale-110 hover:shadow-2xl hover:shadow-blue-500/50 active:scale-95 shadow-lg'}
+							focus:outline-none focus:ring-4 focus:ring-offset-2
+							{isRecording && !isPaused ? 'focus:ring-red-500/50' : isRecording && isPaused ? 'focus:ring-amber-500/50' : 'focus:ring-blue-500/50'}
+						"
+						title={isRecording ? (isPaused ? 'Click to resume recording' : 'Click to pause recording') : 'Click to start recording'}
+					>
+						<!-- Microphone Icon from lucide-svelte -->
+						<Mic class="w-20 h-20" strokeWidth={1.5} />
+					</button>
+				</div>
+
+				<!-- Recording Time Display -->
+				<div class="text-center">
+					<div class="text-5xl font-mono font-bold {isRecording && !isPaused
+						? 'text-red-500'
+						: isRecording && isPaused
+							? 'text-amber-500'
+							: 'text-gray-600'} transition-colors duration-300">
 						{formatTime(recordingTime)}
 					</div>
 				</div>
-			</CardHeader>
-			<CardContent class="space-y-6">
-				{#if analyser}
-					<div>
-						<EqVisualizer {analyser} barCount={32} height={150} />
-					</div>
-				{/if}
 
-				<div class="flex gap-3 flex-wrap">
-					{#if !isRecording}
-						<Button
-							onclick={startRecording}
-							variant="destructive"
-							class="flex items-center gap-2"
-						>
-							● Record
-						</Button>
-					{:else}
-						{#if !isPaused}
-							<Button
-								onclick={pauseRecording}
-								variant="secondary"
-								class="flex items-center gap-2"
-							>
-								⏸ Pause
-							</Button>
+				<!-- State Label and Clear Button -->
+				<div class="flex flex-col items-center gap-3">
+					<!-- Status Label below time -->
+					<p class="text-sm font-medium {isRecording && !isPaused
+						? 'text-red-500'
+						: isRecording && isPaused
+							? 'text-amber-500'
+							: 'text-blue-600'} transition-colors duration-300">
+						{#if !isRecording}
+							Ready
+						{:else if isPaused}
+							Paused
 						{:else}
-							<Button
-								onclick={resumeRecording}
-								variant="default"
-								class="flex items-center gap-2"
-							>
-								▶ Resume
-							</Button>
+							Recording
 						{/if}
+					</p>
 
+					<!-- Clear Recording Button (only show during recording) -->
+					{#if isRecording}
 						<Button
-							onclick={stopRecording}
+							onclick={() => (showClearConfirm = true)}
 							variant="outline"
+							size="sm"
 							class="flex items-center gap-2"
 						>
-							⏹ Stop
+							✕ Clear
 						</Button>
 					{/if}
 				</div>
-			</CardContent>
-		</Card>
+
+				<!-- Status Description -->
+				<p class="text-sm text-muted-foreground text-center max-w-xs">
+					{#if !isRecording}
+						Record your voice and see real-time transcription
+					{:else if isPaused}
+						Recording paused. Click the microphone to resume.
+					{:else}
+						Recording in progress. Click to pause.
+					{/if}
+				</p>
+			</div>
+
+			<!-- Right Column: EQ Visualizer (hidden on mobile) -->
+			<div class="hidden lg:flex lg:flex-1 lg:items-center lg:justify-center">
+				<div class="w-full">
+					<EqVisualizer
+						{analyser}
+						barCount={32}
+						height={250}
+						barColor={isRecording && !isPaused ? '#ef4444' : isRecording && isPaused ? '#f59e0b' : '#3b82f6'}
+						disabledBarColor="#d1d5db"
+						disabled={!isRecording}
+					/>
+				</div>
+			</div>
+		</div>
+
+		<!-- Mobile EQ Visualizer (shown below controls on mobile) -->
+		<div class="lg:hidden">
+			<EqVisualizer
+				{analyser}
+				barCount={32}
+				height={200}
+				barColor={isRecording && !isPaused ? '#ef4444' : isRecording && isPaused ? '#f59e0b' : '#3b82f6'}
+				disabledBarColor="#d1d5db"
+				disabled={!isRecording}
+			/>
+		</div>
+
+		<!-- Confirmation Dialog -->
+		{#if showClearConfirm}
+			<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onclick={() => (showClearConfirm = false)}>
+				<Card class="w-full max-w-sm mx-4" onclick={(e) => e.stopPropagation()}>
+					<CardHeader>
+						<CardTitle>Clear Recording?</CardTitle>
+						<CardDescription>
+							This will stop the current recording and clear the transcript. This action cannot be undone.
+						</CardDescription>
+					</CardHeader>
+					<CardContent class="flex gap-3">
+						<Button
+							onclick={() => (showClearConfirm = false)}
+							variant="outline"
+							class="flex-1"
+						>
+							Cancel
+						</Button>
+						<Button
+							onclick={confirmClearRecording}
+							variant="destructive"
+							class="flex-1"
+						>
+							Clear
+						</Button>
+					</CardContent>
+				</Card>
+			</div>
+		{/if}
 
 		<!-- Transcription Display -->
 		<Card>
@@ -253,3 +401,29 @@
 		</Card>
 	</div>
 </TranscriptionProvider>
+
+<style>
+	@keyframes spin {
+		from {
+			transform: rotate(0deg);
+		}
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
+	@keyframes throb {
+		0% {
+			opacity: 0.2;
+			transform: scale(1);
+		}
+		50% {
+			opacity: 0;
+			transform: scale(1.1);
+		}
+		100% {
+			opacity: 0.2;
+			transform: scale(1);
+		}
+	}
+</style>
