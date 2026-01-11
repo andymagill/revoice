@@ -8,7 +8,7 @@
 		getSessionAudio,
 	} from '$lib/db';
 	import { NativeEngine } from '$lib/engines/native';
-	import { createMediaRecorder, getSupportedAudioFormat } from '$lib/audio';
+	import { createMediaRecorder, getSupportedAudioFormat, getSharedAudioContext } from '$lib/audio';
 	import EqVisualizer from '$lib/components/EqVisualizer.svelte';
 	import AudioPlaybackControls from '$lib/components/AudioPlaybackControls.svelte';
 	import TranscriptionProvider from '$lib/components/TranscriptionProvider.svelte';
@@ -137,7 +137,7 @@
 
 			// Set up audio context and analyser for visualizer
 			if (!audioContext) {
-				audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+				audioContext = getSharedAudioContext();
 			}
 			analyser = audioContext.createAnalyser();
 			const source = audioContext.createMediaStreamSource(stream);

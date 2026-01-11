@@ -99,9 +99,57 @@ export function getSupportedAudioFormat(): AudioFormat {
  * const analyser = audioContext.createAnalyser();
  * source.connect(analyser);
  */
+
+let sharedAudioContext: AudioContext | null = null;
+
+/**
+ * Get a shared AudioContext instance
+ *
+ * Implements a singleton pattern to prevent browser limit errors.
+ * Browsers typically limit the number of active AudioContexts (often 6),
+ * so creating a new one for every recording session will eventually cause a crash.
+ */
+export function getSharedAudioContext(): AudioContext {
+	if (!sharedAudioContext) {
+		sharedAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+	}
+	// Resume context if it was suspended (common in some browsers until user interaction)
+	if (sharedAudioContext.state === 'suspended') {
+		sharedAudioContext.resume();
+	}
+	return sharedAudioContext;
+}
+
+/**
+ * Clone a MediaStream for use with multiple consumers
+ *
+ * Web Audio API and MediaRecorder both need to consume audio from the
+ * microphone. Rather than creating two separate getUserMedia() calls,
+ * this creates a cloned stream that can feed both.
+ *
+ * Technical approach:
+ * 1. Get shared AudioContext and connect source to microphone stream
+ * 2. Create destination (output track)
+ * 3. Return destination.stream (new stream)
+ *
+ * Now both MediaRecorder and AnalyserNode can consume this clone.
+ *
+ * @param stream - Original MediaStream from getUserMedia()
+ * @returns New cloned MediaStream safe to pass to multiple consumers
+ *
+ * @example
+ * const originalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+ * const clonedStream = cloneMediaStream(originalStream);
+ *
+ * const recorder = new MediaRecorder(clonedStream);
+ * const audioContext = new AudioContext();
+ * const source = audioContext.createMediaStreamSource(clonedStream);
+ * const analyser = audioContext.createAnalyser();
+ * source.connect(analyser);
+ */
 export function cloneMediaStream(stream: MediaStream): MediaStream {
-	// Get or create AudioContext (webkit prefix for Safari)
-	const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+	// Get shared AudioContext to avoid hitting browser limits
+	const audioContext = getSharedAudioContext();
 
 	// Connect microphone stream to audio context
 	const source = audioContext.createMediaStreamSource(stream);
