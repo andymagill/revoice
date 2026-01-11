@@ -13,6 +13,11 @@
 		"format": "prettier --write .",
 		"format:check": "prettier --check ."
 	},
+	"pnpm": {
+		"onlyBuiltDependencies": [
+			"esbuild"
+		]
+	},
 	"lint-staged": {
 		"*.{js,ts,svelte,json,md,css,html}": "prettier --write"
 	},
