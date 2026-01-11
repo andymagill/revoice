@@ -1,8 +1,10 @@
 <script lang="ts">
 	import '../app.css';
-	import { onMount } from 'svelte';
+	import { onMount, getContext } from 'svelte';
 	import { getAllSessions, type Session } from '$lib/db';
 	import CompatibilityShield from '$lib/components/CompatibilityShield.svelte';
+	import AudioPlaybackProvider from '$lib/components/AudioPlaybackProvider.svelte';
+	import PlaybackDock from '$lib/components/PlaybackDock.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card/index.js';
 
@@ -162,49 +164,19 @@
 
 			<!-- Playback Dock -->
 			{#if currentPlayingSessionId !== null}
-				<Card class="bg-background border-t border-border rounded-none border-l-0 border-r-0">
-					<CardContent class="flex items-center justify-between py-3">
-						<div class="flex items-center space-x-4">
-							<Button
-								onclick={() => {
-									if (playingAudio) {
-										if (playingAudio.paused) {
-											playingAudio.play();
-										} else {
-											playingAudio.pause();
-										}
-									}
-								}}
-								variant="ghost"
-								size="icon"
-								class="p-2"
-							>
-								{playingAudio?.paused ? '▶' : '⏸'}
-							</Button>
-							<div>
-								<p class="text-sm font-medium text-foreground">Playing Audio</p>
-								<p class="text-xs text-muted-foreground">
-									{playingAudio ? formatTime(playingAudio.currentTime * 1000) : '0:00'} /
-									{playingAudio ? formatTime(playingAudio.duration * 1000) : '0:00'}
-								</p>
-							</div>
-						</div>
-						<Button
-							onclick={() => {
-								if (playingAudio) {
-									playingAudio.pause();
-									playingAudio = null;
-									currentPlayingSessionId = null;
-								}
-							}}
-							variant="ghost"
-							size="icon"
-							class="p-2 text-muted-foreground"
-						>
-							✕
-						</Button>
-					</CardContent>
-				</Card>
+				<AudioPlaybackProvider audio={playingAudio}>
+					<PlaybackDock
+						{playingAudio}
+						{currentPlayingSessionId}
+						onClose={() => {
+							if (playingAudio) {
+								playingAudio.pause();
+								playingAudio = null;
+								currentPlayingSessionId = null;
+							}
+						}}
+					/>
+				</AudioPlaybackProvider>
 			{/if}
 		</div>
 	</div>

@@ -35,8 +35,56 @@ interface ITranscriptionEngine {
 	getState(): 'idle' | 'listening' | 'processing';
 	onResult(callback): () => void;
 	onError(callback): () => void;
+	start(stream, config?): Promise<void>;
+	stop(): Promise<void>;
+	getState(): 'idle' | 'listening' | 'processing';
+	onResult(callback): () => void;
+	onError(callback): () => void;
 	getMetadata(): EngineMetadata;
 }
+```
+
+## Critical Patterns & Pitfalls (Read Before Contributing)
+
+### 1. Svelte 5 Responsivity vs. Resource Management
+
+**The Issue:** Svelte 5's `$effect` primitive is highly reactive. If you read a state variable inside an effect that also _updates_ that variable (or triggers a cleanup that reads it), you will create an infinite loop.
+
+**The Fix:** Use `untrack()` for cleanup logic or "read-only" dependency access.
+
+```typescript
+// ❌ BAD: Infinite Loop
+$effect(() => {
+	// Reading 'audio' registers it as a dependency
+	if (audio) {
+		audio.pause();
+	}
+	// ... create new audio ...
+	audio = newAudio; // Triggers effect again!
+});
+
+// ✅ GOOD: Untracked Cleanup
+$effect(() => {
+	// Reading 'audio' via untrack hides dependency from Svelte
+	const prevAudio = untrack(() => audio);
+	if (prevAudio) {
+		prevAudio.pause();
+	}
+
+	// ... create new audio ...
+	audio = newAudio; // Safe to update
+});
+```
+
+### 2. MediaRecorder Blob Duration
+
+**The Issue:** Blobs created via `MediaRecorder` often lack metadata headers for duration, especially in Chrome (WebM). This causes `audio.duration` to return `Infinity`, breaking UI sliders and timeline calculations.
+
+**The Fix:** Never trust `audio.duration` alone for recorded blobs. always pass an explicit duration tracked by the application.
+
+```typescript
+// Fallback logic in components
+const duration = Number.isFinite(audio.duration) ? audio.duration : knownDurationMs / 1000;
 ```
 
 **Extension Points**:

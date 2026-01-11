@@ -39,7 +39,7 @@
 		ref = $bindable(null),
 		href = undefined,
 		type = 'button',
-		disabled,
+		disabled = undefined,
 		children,
 		...restProps
 	} = $props();

@@ -222,3 +222,64 @@ export function getAudioFileExtension(mimeType: string): string {
 	if (mimeType.includes('ogg')) return '.ogg';
 	return '.audio';
 }
+
+/**
+ * Format time in seconds to human-readable string
+ *
+ * Returns time in MM:SS format for durations under 1 hour,
+ * or HH:MM:SS format for longer durations.
+ * Handles edge cases like NaN, Infinity, and negative values.
+ *
+ * @param seconds - Time in seconds (can be fractional)
+ * @returns Formatted time string
+ *
+ * @example
+ * formatTime(65);     // "01:05"
+ * formatTime(3665);   // "1:01:05"
+ * formatTime(0);      // "00:00"
+ * formatTime(NaN);    // "00:00"
+ */
+export function formatTime(seconds: number): string {
+	if (!isFinite(seconds) || seconds < 0) {
+		return '00:00';
+	}
+
+	const hours = Math.floor(seconds / 3600);
+	const minutes = Math.floor((seconds % 3600) / 60);
+	const secs = Math.floor(seconds % 60);
+
+	if (hours > 0) {
+		return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+	}
+
+	return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+}
+
+/**
+ * Create an HTMLAudioElement from a Blob
+ *
+ * Converts an audio Blob to an Object URL and creates a new Audio element.
+ * The URL should be revoked when the audio is no longer needed.
+ *
+ * @param blob - Audio data as Blob
+ * @returns HTMLAudioElement configured with the blob URL
+ *
+ * @example
+ * const audio = createAudioElementFromBlob(audioBlob);
+ * audio.play();
+ *
+ * // Later, when done:
+ * URL.revokeObjectURL(audio.src);
+ */
+export function createAudioElementFromBlob(blob: Blob): HTMLAudioElement {
+	const url = URL.createObjectURL(blob);
+	const audio = new Audio(url);
+
+	// Cleanup URL when audio is unloaded
+	audio.addEventListener('ended', () => {
+		// Note: Don't auto-revoke if the audio might be replayed
+		// Let the caller manage URL lifecycle
+	});
+
+	return audio;
+}
