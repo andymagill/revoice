@@ -86,10 +86,10 @@
 	let animationId: number = 0;
 
 	/** Frequency bin data array (0-255 for each bin) */
-	let dataArray: Uint8Array | null = null;
+	let dataArray: Uint8Array<ArrayBuffer> | null = null;
 
 	/** Frozen snapshot of frequency data (preserved when paused) */
-	let frozenData: Uint8Array | null = null;
+	let frozenData: Uint8Array<ArrayBuffer> | null = null;
 
 	/**
 	 * Initialize canvas, analyser, and start animation loop
@@ -119,7 +119,7 @@
 		}
 
 		// Pre-allocate frequency data array (reused every frame)
-		dataArray = new Uint8Array(bufferLength) as Uint8Array;
+		dataArray = new Uint8Array(bufferLength) as Uint8Array<ArrayBuffer>;
 
 		// Scale canvas for high-DPI displays
 		canvas.width = canvas.offsetWidth * window.devicePixelRatio;
@@ -210,7 +210,7 @@
 	$effect(() => {
 		if (frozen && dataArray && !frozenData) {
 			// Transitioning to frozen: capture snapshot
-			frozenData = new Uint8Array(dataArray) as Uint8Array;
+			frozenData = new Uint8Array(dataArray) as Uint8Array<ArrayBuffer>;
 		} else if (!frozen && frozenData) {
 			// Transitioning from frozen: clear snapshot and restart animation
 			frozenData = null;

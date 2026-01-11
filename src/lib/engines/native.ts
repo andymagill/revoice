@@ -63,6 +63,13 @@ export class NativeEngine extends TranscriptionEngine {
 	private stream: MediaStream | null = null;
 
 	/**
+	 * Index of the last processed result.
+	 * Used to deduplicate results when the engine emits duplicate events.
+	 * @private
+	 */
+	private lastResultIndex: number = 0;
+
+	/**
 	 * Constructor: Initialize the Web Speech API
 	 *
 	 * Throws an error if the Web Speech API is not available in the browser.

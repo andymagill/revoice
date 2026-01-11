@@ -31,7 +31,26 @@
 	});
 </script>
 
-<script>
+<script lang="ts">
+	import type { VariantProps } from 'tailwind-variants';
+	import type { Snippet } from 'svelte';
+	import type { HTMLAnchorAttributes, HTMLButtonAttributes } from 'svelte/elements';
+
+	type ButtonVariant = VariantProps<typeof buttonVariants>['variant'];
+	type ButtonSize = VariantProps<typeof buttonVariants>['size'];
+
+	interface Props {
+		class?: string;
+		variant?: ButtonVariant;
+		size?: ButtonSize;
+		ref?: HTMLButtonElement | HTMLAnchorElement | null;
+		href?: string;
+		type?: 'button' | 'submit' | 'reset';
+		disabled?: boolean;
+		children?: Snippet;
+		[key: string]: any;
+	}
+
 	let {
 		class: className,
 		variant = 'default',
@@ -42,7 +61,7 @@
 		disabled = undefined,
 		children,
 		...restProps
-	} = $props();
+	}: Props = $props();
 </script>
 
 {#if href}

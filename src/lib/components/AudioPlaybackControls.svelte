@@ -32,7 +32,11 @@
 	let audio: HTMLAudioElement | null = $state(null);
 	let isPlaying = $state(false);
 	let currentTime = $state(0);
-	let duration = $state(durationMs > 0 ? durationMs / 1000 : 0);
+	let duration = $state(
+		untrack(() => {
+			return durationMs > 0 ? durationMs / 1000 : 0;
+		})
+	);
 	let isSeeking = $state(false);
 	let localBlob: Blob | null = $state(null);
 

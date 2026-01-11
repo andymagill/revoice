@@ -1,5 +1,6 @@
 import Dexie, { type Table } from 'dexie';
 import type { Session, AudioData, Transcript } from './types';
+export type { Session, AudioData, Transcript };
 
 /**
  * ReVoice Database Layer

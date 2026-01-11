@@ -88,14 +88,14 @@
 							onclick={() => (currentSession = session)}
 							role="button"
 							tabindex="0"
-							onkeydown={(e) => e.key === 'Enter' && (currentSession = session)}
+							onkeydown={(e: KeyboardEvent) => e.key === 'Enter' && (currentSession = session)}
 						>
 							<p class="font-medium text-sm text-foreground">{session.title}</p>
 							<div class="flex justify-between items-center mt-2 text-xs text-muted-foreground">
 								<span>{formatTime(session.duration)}</span>
 								<div class="space-x-1">
 									<Button
-										onclick={(e) => {
+										onclick={(e: MouseEvent) => {
 											e.stopPropagation();
 											playSession(session);
 										}}
@@ -106,7 +106,7 @@
 										▶
 									</Button>
 									<Button
-										onclick={(e) => {
+										onclick={(e: MouseEvent) => {
 											e.stopPropagation();
 											deleteSession(session.id!);
 										}}
