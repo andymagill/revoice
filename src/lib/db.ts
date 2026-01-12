@@ -14,11 +14,15 @@ export type { Session, AudioData, Transcript };
  * - sessions: Recording metadata (timestamp, duration, engine type, MIME type)
  * - audioData: Binary audio blobs (indexed by sessionId for fast lookup)
  * - transcripts: Individual transcript segments (indexed by sessionId and time)
+ * - recordingChunks: Audio chunks streamed during recording (indexed by sessionId + sequence)
+ * - playbackCache: Cached reconstructed blobs for quick playback access
  */
 export class ReVoiceDB extends Dexie {
 	sessions!: Table<Session, number>;
 	audioData!: Table<AudioData, number>;
 	transcripts!: Table<Transcript, number>;
+	recordingChunks!: any; // { sessionId, sequence, blob, timestamp }
+	playbackCache!: any; // { sessionId, blob, cachedAt }
 
 	constructor() {
 		super('ReVoiceDB');
@@ -35,6 +39,22 @@ export class ReVoiceDB extends Dexie {
 			// transcripts: id (auto), sessionId (for filtering), time (for ordering)
 			transcripts: '++id, sessionId, text, time',
 		});
+
+		// Add streaming support in v2
+		// recordingChunks: compound primary key [sessionId, sequence] for efficient range queries
+		// playbackCache: sessionId as primary key for O(1) cache lookups
+		this.version(2)
+			.stores({
+				sessions: '++id, timestamp, duration, title, mimeType, engineType',
+				audioData: '++id, sessionId',
+				transcripts: '++id, sessionId, text, time',
+				recordingChunks: '[sessionId+sequence], sessionId, timestamp',
+				playbackCache: 'sessionId',
+			})
+			.upgrade((tx) => {
+				// No data migration needed - new stores are empty on first upgrade
+				console.log('[DB] Upgraded to v2 with streaming support');
+			});
 	}
 }
 
