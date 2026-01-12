@@ -31,7 +31,7 @@
 	}
 </script>
 
-<div class="flex flex-col items-center justify-center gap-4 py-8">
+<div class="flex flex-col items-center justify-center gap-2 py-2">
 	<!-- Large Microphone Button with Animation -->
 	<div class="relative">
 		<!-- Rotating/Throbbing border when recording -->
@@ -50,7 +50,7 @@
 		<button
 			onclick={onMicClick}
 			class="
-			w-40 h-40 rounded-full flex items-center justify-center
+			w-40 h-40 rounded-full flex flex-col items-center justify-center
 			transition-all duration-300 transform
 			{isRecording && !isPaused
 				? 'bg-red-500 text-white shadow-xl shadow-red-500/50 hover:shadow-2xl hover:shadow-red-500/70'
@@ -72,6 +72,16 @@
 		>
 			<!-- Microphone Icon from lucide-svelte -->
 			<Mic class="w-20 h-20" strokeWidth={1.5} />
+			<!-- Status Label inside button -->
+			<p class="text-xs font-semibold mt-2">
+				{#if !isRecording}
+					Ready
+				{:else if isPaused}
+					Paused
+				{:else}
+					Recording
+				{/if}
+			</p>
 		</button>
 	</div>
 
@@ -88,26 +98,8 @@
 		</div>
 	</div>
 
-	<!-- State Label and Clear Button -->
+	<!-- Clear Button -->
 	<div class="flex flex-col items-center gap-3">
-		<!-- Status Label below time -->
-		<p
-			class="text-sm font-medium {isRecording && !isPaused
-				? 'text-red-500'
-				: isRecording && isPaused
-					? 'text-amber-500'
-					: 'text-blue-600'} transition-colors duration-300"
-		>
-			{#if !isRecording}
-				Ready
-			{:else if isPaused}
-				Paused
-			{:else}
-				Recording
-			{/if}
-		</p>
-
-		<!-- Clear Recording Button (show during recording or paused) -->
 		{#if isActive}
 			<Button
 				onclick={onShowClearConfirm}

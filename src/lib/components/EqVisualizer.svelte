@@ -41,8 +41,8 @@
 		/** AudioContext instance (optional, for compatibility) */
 		audioContext?: AudioContext;
 
-		/** REQUIRED: AnalyserNode with connected audio stream (typically recording analyser) */
-		analyser?: AnalyserNode;
+		/** AnalyserNode for recording input (recording analyser from microphone stream) */
+		recordingAnalyser?: AnalyserNode;
 
 		/** Number of frequency bars (default: 32) */
 		barCount?: number;
@@ -64,14 +64,11 @@
 
 		/** Whether to freeze the current visualization (preserves last frame when paused) */
 		frozen?: boolean;
-
-		/** Visualization mode: 'recording' (red) or 'playback' (green) */
-		mode?: 'recording' | 'playback';
 	}
 
 	let {
 		audioContext,
-		analyser,
+		recordingAnalyser,
 		barCount = 32,
 		height = 200,
 		barColor,
@@ -79,24 +76,25 @@
 		pausedBarColor = '#f59e0b',
 		disabled = false,
 		frozen = false,
-		mode = 'recording',
 	}: Props = $props();
 
-	// Try to get playback context (will be available if inside AudioPlaybackProvider)
-	let audioPlayback: { analyser: AnalyserNode | null } | null = $state(null);
+	// CRITICAL: Get playback context during component initialization (not conditionally)
+	// This must be done at the top level, not in effects or try-catch blocks
+	let audioPlayback: { analyser: AnalyserNode | null } | null = null;
 	try {
 		audioPlayback = getContext<{ analyser: AnalyserNode | null }>('audioPlayback');
-	} catch {
+	} catch (e) {
 		// Context not available (not inside AudioPlaybackProvider), that's fine
 		audioPlayback = null;
 	}
 
 	// Determine which analyser to use:
-	// Priority: playback analyser (if available and playing) > recording analyser > null
-	const activeAnalyser = $derived(audioPlayback?.analyser || analyser);
+	// Priority: playback analyser (if available and connected) > recording analyser > null
+	const activeAnalyser = $derived(audioPlayback?.analyser || recordingAnalyser);
 
-	// Determine mode based on which analyser is active
-	const effectiveMode = $derived(audioPlayback?.analyser ? 'playback' : mode);
+	// Determine mode based on which analyser is active:
+	// playback (green) takes priority when connected, recording (red) otherwise
+	const effectiveMode = $derived(audioPlayback?.analyser ? 'playback' : 'recording');
 
 	// Auto-select bar color based on effective mode if not explicitly provided
 	const defaultBarColor = $derived(

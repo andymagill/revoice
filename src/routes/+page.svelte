@@ -380,8 +380,8 @@
 	<TranscriptionProvider {engine}>
 		<AudioPlaybackProvider audio={playbackAudio}>
 			<div class="max-w-6xl mx-auto space-y-6 px-4">
-				<!-- Main Content Section: 3-column responsive layout -->
-				<div class="lg:grid lg:grid-cols-3 lg:gap-6 lg:items-start space-y-6 lg:space-y-0">
+				<!-- Main Content Section: 2-column responsive layout -->
+				<div class="lg:grid lg:grid-cols-2 lg:gap-6 lg:items-start space-y-6 lg:space-y-0">
 					<!-- Left Column: Recording Controls (centered on mobile, left-aligned on desktop) -->
 					<div class="lg:col-span-1 flex justify-center lg:justify-start">
 						<RecordingControls
@@ -392,45 +392,41 @@
 						/>
 					</div>
 
-					<!-- Center Column: Playback Controls (full width on mobile, center on desktop) -->
-					<div class="lg:col-span-1">
-						<AudioPlaybackControls
-							blob={currentAudioBlob}
-							{headerChunk}
-							{audioChunks}
-							mimeType={getSupportedAudioFormat().mimeType}
-							disabled={recordingState === 'recording'}
-							durationMs={recordingTime}
-							onAudioChange={(audio) => (playbackAudio = audio)}
-						/>
-					</div>
+					<!-- Right Column: Playback Controls and Visualizer (stacked) -->
+					<div class="lg:col-span-1 space-y-6">
+						<!-- Playback Controls Card -->
+						<Card>
+							<CardContent>
+								<AudioPlaybackControls
+									blob={currentAudioBlob}
+									{headerChunk}
+									{audioChunks}
+									mimeType={getSupportedAudioFormat().mimeType}
+									disabled={recordingState === 'recording'}
+									durationMs={recordingTime}
+									onAudioChange={(audio) => (playbackAudio = audio)}
+								/>
+							</CardContent>
+						</Card>
 
-					<!-- Right Column: EQ Visualizer (recording visualizer) -->
-					<div class="lg:col-span-1">
+						<!-- EQ Visualizer -->
 						<div class="space-y-2">
-							<p class="text-xs text-muted-foreground px-2">Recording Input</p>
+							<p class="text-xs text-muted-foreground px-2">
+								{#if playbackAudio}
+									Audio Output
+								{:else}
+									Recording Input
+								{/if}
+							</p>
 							<EqVisualizer
-								analyser={analyser ?? undefined}
+								recordingAnalyser={analyser ?? undefined}
 								barCount={32}
 								height={150}
-								mode="recording"
-								disabled={!isRecording}
-								frozen={isPaused}
+								disabled={!isRecording && !playbackAudio}
+								frozen={isPaused && !playbackAudio}
 							/>
 						</div>
 					</div>
-				</div>
-
-				<!-- Playback Visualizer (Full width, shown when playing) -->
-				<div class="hidden lg:block">
-					<p class="text-xs text-muted-foreground px-2 mb-2">Playback Output</p>
-					<EqVisualizer
-						barCount={32}
-						height={120}
-						mode="playback"
-						disabled={false}
-						frozen={false}
-					/>
 				</div>
 
 				<!-- Confirmation Dialog -->
