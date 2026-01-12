@@ -432,15 +432,6 @@
 		}
 	}
 
-	async function handleNewSession() {
-		await clearRecording();
-		// Reset session context
-		if (sessionContext) {
-			sessionContext.set(null);
-		}
-		sessionId = null;
-	}
-
 	let startTime: number | null = null;
 </script>
 
@@ -455,12 +446,7 @@
 				>
 					<!-- Left Column: Recording Controls (centered on mobile, left-aligned on desktop) -->
 					<div class="flex justify-center lg:justify-start">
-						<RecordingControls
-							{recordingState}
-							{recordingTime}
-							onMicClick={handleMicClick}
-							onNewSession={handleNewSession}
-						/>
+						<RecordingControls {recordingState} {recordingTime} onMicClick={handleMicClick} />
 					</div>
 
 					<!-- Right Column: Playback Controls and Visualizer (stacked) -->

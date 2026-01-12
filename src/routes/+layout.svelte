@@ -64,6 +64,10 @@
 		};
 	}
 
+	async function handleNewSession() {
+		currentSession = null;
+	}
+
 	function formatTime(ms: number): string {
 		const seconds = Math.floor(ms / 1000);
 		const minutes = Math.floor(seconds / 60);
@@ -174,7 +178,9 @@
 				<h2 class="text-lg font-semibold text-foreground">
 					{currentSession ? currentSession.title : 'New Session'}
 				</h2>
-				<div class="w-8"></div>
+				<Button onclick={handleNewSession} variant="outline" size="sm" class="text-xs">
+					New Session
+				</Button>
 			</div>
 
 			<!-- Content -->
