@@ -1,11 +1,13 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, getContext } from 'svelte';
 	import {
 		createSession,
 		updateSessionDuration,
 		storeAudioData,
 		storeTranscript,
 		getSessionAudio,
+		getSessionTranscripts,
+		type Session,
 	} from '$lib/db';
 	import { NativeEngine } from '$lib/engines/native';
 	import { createMediaRecorder, getSupportedAudioFormat, getSharedAudioContext } from '$lib/audio';
@@ -105,6 +107,11 @@
 	let engine: NativeEngine | null = $state(null);
 	let timerInterval: ReturnType<typeof setInterval> | null = null;
 
+	// Get currentSession context from layout
+	const sessionContext = getContext<{ current: Session | null; set(value: Session | null): void }>(
+		'currentSession'
+	);
+
 	// Fetch audio blob when sessionId changes (for loading existing sessions)
 	$effect(() => {
 		if (sessionId && recordingState === 'idle' && !currentAudioBlob) {
@@ -120,6 +127,39 @@
 				});
 		}
 		// Note: Don't clear blob when paused - that's when we want playback!
+	});
+
+	// Load session data when currentSession changes from sidebar selection
+	$effect(async () => {
+		const selectedSession = sessionContext?.current;
+		if (selectedSession?.id) {
+			try {
+				// Load the audio blob for this session
+				const blob = await getSessionAudio(selectedSession.id);
+				if (blob) {
+					currentAudioBlob = blob;
+				}
+
+				// Load all transcripts for this session
+				const transcripts = await getSessionTranscripts(selectedSession.id);
+				// Convert stored transcripts to TranscriptionResult format
+				finalResults = transcripts.map((t) => ({
+					text: t.text,
+					isFinal: true,
+					timestamp: Date.now(), // Note: stored transcripts don't have client timestamp
+				}));
+
+				// Set sessionId so recording controls know which session we're viewing
+				sessionId = selectedSession.id;
+
+				// Reset recording state when loading a session
+				recordingState = 'idle';
+				currentInterim = null;
+				recordingTime = 0;
+			} catch (error) {
+				console.error('Failed to load session data:', error);
+			}
+		}
 	});
 
 	onMount(() => {

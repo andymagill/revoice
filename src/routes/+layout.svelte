@@ -1,6 +1,6 @@
 <script lang="ts">
 	import '../app.css';
-	import { onMount, getContext } from 'svelte';
+	import { onMount, getContext, setContext } from 'svelte';
 	import { getAllSessions, type Session } from '$lib/db';
 	import CompatibilityShield from '$lib/components/CompatibilityShield.svelte';
 	import AudioPlaybackProvider from '$lib/components/AudioPlaybackProvider.svelte';
@@ -20,6 +20,16 @@
 	let currentPlayingSessionId: number | null = $state(null);
 
 	let { children } = $props();
+
+	// Provide currentSession to child components via Svelte 5 context
+	setContext('currentSession', {
+		get current() {
+			return currentSession;
+		},
+		set(value: Session | null) {
+			currentSession = value;
+		},
+	});
 
 	onMount(async () => {
 		sessions = await getAllSessions();
