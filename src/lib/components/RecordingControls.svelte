@@ -11,9 +11,12 @@
 
 		/** Callback when microphone button is clicked */
 		onMicClick: () => void;
+
+		/** Callback when new session button is clicked */
+		onNewSession?: () => void;
 	}
 
-	let { recordingState, recordingTime, onMicClick }: Props = $props();
+	let { recordingState, recordingTime, onMicClick, onNewSession }: Props = $props();
 
 	// Derived state for convenience
 	const isRecording = $derived(recordingState === 'recording');
@@ -29,6 +32,15 @@
 </script>
 
 <div class="flex flex-col items-center justify-center gap-2 p-4">
+	<!-- Header with New Session Button -->
+	<div class="w-full flex justify-end mb-4">
+		{#if onNewSession}
+			<Button onclick={onNewSession} variant="outline" size="sm" class="text-xs">
+				New Session
+			</Button>
+		{/if}
+	</div>
+
 	<!-- Large Microphone Button with Animation -->
 	<div class="relative">
 		<!-- Rotating/Throbbing border when recording -->
