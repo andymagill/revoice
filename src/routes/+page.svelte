@@ -93,7 +93,6 @@
 	let currentInterim: TranscriptionResult | null = $state(null);
 	let recordingTime: number = $state(0);
 	let sessionId: number | null = null;
-	let showClearConfirm: boolean = $state(false);
 	let suppressTranscriptionErrors: boolean = false;
 
 	let mediaRecorder: MediaRecorder | null = null;
@@ -130,35 +129,37 @@
 	});
 
 	// Load session data when currentSession changes from sidebar selection
-	$effect(async () => {
+	$effect(() => {
 		const selectedSession = sessionContext?.current;
 		if (selectedSession?.id) {
-			try {
-				// Load the audio blob for this session
-				const blob = await getSessionAudio(selectedSession.id);
-				if (blob) {
-					currentAudioBlob = blob;
+			(async () => {
+				try {
+					// Load the audio blob for this session
+					const blob = await getSessionAudio(selectedSession.id!);
+					if (blob) {
+						currentAudioBlob = blob;
+					}
+
+					// Load all transcripts for this session
+					const transcripts = await getSessionTranscripts(selectedSession.id!);
+					// Convert stored transcripts to TranscriptionResult format
+					finalResults = transcripts.map((t) => ({
+						text: t.text,
+						isFinal: true,
+						timestamp: Date.now(), // Note: stored transcripts don't have client timestamp
+					}));
+
+					// Set sessionId so recording controls know which session we're viewing
+					sessionId = selectedSession.id!;
+
+					// Reset recording state when loading a session
+					recordingState = 'idle';
+					currentInterim = null;
+					recordingTime = 0;
+				} catch (error) {
+					console.error('Failed to load session data:', error);
 				}
-
-				// Load all transcripts for this session
-				const transcripts = await getSessionTranscripts(selectedSession.id);
-				// Convert stored transcripts to TranscriptionResult format
-				finalResults = transcripts.map((t) => ({
-					text: t.text,
-					isFinal: true,
-					timestamp: Date.now(), // Note: stored transcripts don't have client timestamp
-				}));
-
-				// Set sessionId so recording controls know which session we're viewing
-				sessionId = selectedSession.id;
-
-				// Reset recording state when loading a session
-				recordingState = 'idle';
-				currentInterim = null;
-				recordingTime = 0;
-			} catch (error) {
-				console.error('Failed to load session data:', error);
-			}
+			})();
 		}
 	});
 
@@ -208,13 +209,23 @@
 			recordingTime = 0;
 			startTime = Date.now();
 
-			// Create session
-			const format_ext = format.mimeType.includes('webm') ? 'WebM' : 'MP4';
-			sessionId = await createSession(
-				`Session ${new Date().toLocaleTimeString()}`,
-				'native',
-				format.mimeType
-			);
+			// Create new session OR resume existing session
+			// If sessionId is already set (from loading a session), append to it
+			// Otherwise create a new session
+			if (!sessionId) {
+				const format_ext = format.mimeType.includes('webm') ? 'WebM' : 'MP4';
+				sessionId = await createSession(
+					`Session ${new Date().toLocaleTimeString()}`,
+					'native',
+					format.mimeType
+				);
+				// Clear transcripts when starting fresh
+				finalResults = [];
+			} else {
+				// Resuming on an existing session - keep loaded transcripts
+				// Clear any interim results from previous recording session
+				currentInterim = null;
+			}
 
 			// Start transcription engine
 			if (engine) {
@@ -280,11 +291,6 @@
 			console.error('Failed to start recording:', error);
 			recordingState = 'idle';
 		}
-	}
-
-	async function confirmClearRecording() {
-		showClearConfirm = false;
-		await clearRecording();
 	}
 
 	async function clearRecording() {
@@ -357,14 +363,27 @@
 			// Pause mediaRecorder
 			mediaRecorder.pause();
 
-			// Update state IMMEDIATELY - don't create blob yet
+			// Update state
 			recordingState = 'paused';
 
-			// Request one final data flush (non-blocking)
+			// Request one final data flush
 			mediaRecorder.requestData();
 
-			// NOTE: We don't create the blob here anymore - too expensive
-			// It will be created on-demand when user clicks play
+			// Create and save blob from accumulated chunks on pause
+			// This ensures audio is persisted and available for playback
+			if (sessionId && audioChunks.length > 0) {
+				const format = getSupportedAudioFormat();
+				const audioBlob = new Blob(audioChunks, { type: format.mimeType });
+				// Save the blob (this will overwrite previous blob if resuming an existing session)
+				storeAudioData(sessionId, audioBlob)
+					.then(() => {
+						currentAudioBlob = audioBlob;
+						console.log('Audio saved on pause');
+					})
+					.catch((error) => {
+						console.error('Failed to save audio on pause:', error);
+					});
+			}
 		} catch (error) {
 			console.error('Error pausing recording:', error);
 		}
@@ -424,12 +443,7 @@
 				<div class="lg:grid lg:grid-cols-2 lg:gap-6 lg:items-start space-y-6 lg:space-y-0">
 					<!-- Left Column: Recording Controls (centered on mobile, left-aligned on desktop) -->
 					<div class="lg:col-span-1 flex justify-center lg:justify-start">
-						<RecordingControls
-							{recordingState}
-							{recordingTime}
-							onMicClick={handleMicClick}
-							onShowClearConfirm={() => (showClearConfirm = true)}
-						/>
+						<RecordingControls {recordingState} {recordingTime} onMicClick={handleMicClick} />
 					</div>
 
 					<!-- Right Column: Playback Controls and Visualizer (stacked) -->
@@ -468,44 +482,6 @@
 						</div>
 					</div>
 				</div>
-
-				<!-- Confirmation Dialog -->
-				{#if showClearConfirm}
-					<div
-						class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-						role="button"
-						tabindex="0"
-						aria-label="Close dialog"
-						onclick={() => (showClearConfirm = false)}
-						onkeydown={(e) => {
-							if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') {
-								e.preventDefault();
-								showClearConfirm = false;
-							}
-						}}
-					>
-						<Card class="w-full max-w-sm mx-4" onclick={(e: MouseEvent) => e.stopPropagation()}>
-							<CardHeader>
-								<CardTitle>End Recording?</CardTitle>
-								<CardDescription>
-									{#if recordingState === 'paused'}
-										Your recording has been auto-saved. End this session to start a new recording?
-									{:else}
-										This will stop the current recording. Your audio will be saved. Continue?
-									{/if}
-								</CardDescription>
-							</CardHeader>
-							<CardContent class="flex gap-3">
-								<Button onclick={() => (showClearConfirm = false)} variant="outline" class="flex-1">
-									Cancel
-								</Button>
-								<Button onclick={confirmClearRecording} variant="destructive" class="flex-1">
-									Clear
-								</Button>
-							</CardContent>
-						</Card>
-					</div>
-				{/if}
 
 				<!-- Transcription Display -->
 				<Card>

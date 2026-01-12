@@ -11,12 +11,9 @@
 
 		/** Callback when microphone button is clicked */
 		onMicClick: () => void;
-
-		/** Callback to show clear confirmation dialog */
-		onShowClearConfirm: () => void;
 	}
 
-	let { recordingState, recordingTime, onMicClick, onShowClearConfirm }: Props = $props();
+	let { recordingState, recordingTime, onMicClick }: Props = $props();
 
 	// Derived state for convenience
 	const isRecording = $derived(recordingState === 'recording');
@@ -96,20 +93,6 @@
 		>
 			{formatTime(recordingTime)}
 		</div>
-	</div>
-
-	<!-- Clear Button -->
-	<div class="flex flex-col items-center gap-3">
-		{#if isActive}
-			<Button
-				onclick={onShowClearConfirm}
-				variant="outline"
-				size="sm"
-				class="flex items-center gap-2"
-			>
-				✕ Clear
-			</Button>
-		{/if}
 	</div>
 
 	<!-- Status Description -->
