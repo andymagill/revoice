@@ -438,7 +438,7 @@
 {#if engine}
 	<TranscriptionProvider {engine}>
 		<AudioPlaybackProvider audio={playbackAudio}>
-			<div class="max-w-6xl mx-auto space-y-6 px-4">
+			<div class="space-y-6 sm:p-4">
 				<!-- Main Content Section: 2-column responsive layout -->
 				<div
 					class="lg:grid lg:gap-6 lg:items-start space-y-6 lg:space-y-0"

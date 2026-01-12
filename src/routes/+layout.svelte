@@ -5,6 +5,7 @@
 	import CompatibilityShield from '$lib/components/CompatibilityShield.svelte';
 	import AudioPlaybackProvider from '$lib/components/AudioPlaybackProvider.svelte';
 	import PlaybackDock from '$lib/components/PlaybackDock.svelte';
+	import Footer from '$lib/components/Footer.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card/index.js';
 
@@ -184,26 +185,31 @@
 			</div>
 
 			<!-- Content -->
-			<div class="flex-1 overflow-auto p-4">
+			<div class="flex-1 overflow-auto p-4 flex flex-col">
 				{@render children()}
-			</div>
 
-			<!-- Playback Dock -->
-			{#if currentPlayingSessionId !== null}
-				<AudioPlaybackProvider audio={playingAudio}>
-					<PlaybackDock
-						{playingAudio}
-						{currentPlayingSessionId}
-						onClose={() => {
-							if (playingAudio) {
-								playingAudio.pause();
-								playingAudio = null;
-								currentPlayingSessionId = null;
-							}
-						}}
-					/>
-				</AudioPlaybackProvider>
-			{/if}
+				<!-- Playback Dock -->
+				{#if currentPlayingSessionId !== null}
+					<AudioPlaybackProvider audio={playingAudio}>
+						<PlaybackDock
+							{playingAudio}
+							{currentPlayingSessionId}
+							onClose={() => {
+								if (playingAudio) {
+									playingAudio.pause();
+									playingAudio = null;
+									currentPlayingSessionId = null;
+								}
+							}}
+						/>
+					</AudioPlaybackProvider>
+				{/if}
+
+				<!-- Footer -->
+				<div class="mt-auto">
+					<Footer />
+				</div>
+			</div>
 		</div>
 	</div>
 </CompatibilityShield>
