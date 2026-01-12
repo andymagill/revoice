@@ -440,14 +440,17 @@
 		<AudioPlaybackProvider audio={playbackAudio}>
 			<div class="max-w-6xl mx-auto space-y-6 px-4">
 				<!-- Main Content Section: 2-column responsive layout -->
-				<div class="lg:grid lg:grid-cols-2 lg:gap-6 lg:items-start space-y-6 lg:space-y-0">
+				<div
+					class="lg:grid lg:gap-6 lg:items-start space-y-6 lg:space-y-0"
+					style="grid-template-columns: auto 1fr;"
+				>
 					<!-- Left Column: Recording Controls (centered on mobile, left-aligned on desktop) -->
-					<div class="lg:col-span-1 flex justify-center lg:justify-start">
+					<div class="flex justify-center lg:justify-start">
 						<RecordingControls {recordingState} {recordingTime} onMicClick={handleMicClick} />
 					</div>
 
 					<!-- Right Column: Playback Controls and Visualizer (stacked) -->
-					<div class="lg:col-span-1 space-y-6">
+					<div class="space-y-6">
 						<!-- Playback Controls Card -->
 						<Card>
 							<CardContent>

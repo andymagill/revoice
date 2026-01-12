@@ -28,7 +28,7 @@
 	}
 </script>
 
-<div class="flex flex-col items-center justify-center gap-2 py-2">
+<div class="flex flex-col items-center justify-center gap-2 p-4">
 	<!-- Large Microphone Button with Animation -->
 	<div class="relative">
 		<!-- Rotating/Throbbing border when recording -->
