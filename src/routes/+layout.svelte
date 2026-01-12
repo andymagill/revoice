@@ -15,7 +15,7 @@
 
 	let sessions: Session[] = $state([]);
 	let currentSession: Session | null = $state(null);
-	let sidebarOpen: boolean = $state(true);
+	let sidebarOpen: boolean = $state(false);
 	let playingAudio: HTMLAudioElement | null = $state(null);
 	let currentPlayingSessionId: number | null = $state(null);
 
@@ -68,9 +68,19 @@
 
 <CompatibilityShield>
 	<div class="flex h-screen bg-background">
+		<!-- Mobile Overlay -->
+		{#if sidebarOpen}
+			<div
+				class="fixed inset-0 bg-black/50 z-40 md:hidden"
+				onclick={() => (sidebarOpen = false)}
+			></div>
+		{/if}
+
 		<!-- Sidebar -->
 		<div
-			class={`${sidebarOpen ? 'w-64' : 'w-0'} bg-background border-r border-border transition-all duration-300 overflow-hidden flex flex-col`}
+			class={`w-0 md:w-64 ${
+				sidebarOpen ? 'w-64' : 'md:w-64'
+			} bg-background border-r border-border transition-all duration-300 overflow-hidden flex flex-col fixed md:static z-50 md:z-auto h-full md:h-auto`}
 		>
 			<div class="p-4 border-b border-border">
 				<h1 class="text-xl font-bold text-foreground">ReVoice</h1>
@@ -147,7 +157,7 @@
 					onclick={() => (sidebarOpen = !sidebarOpen)}
 					variant="ghost"
 					size="icon"
-					class="p-2"
+					class="p-2 md:hidden"
 				>
 					☰
 				</Button>
