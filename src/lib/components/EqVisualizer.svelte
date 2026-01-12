@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, getContext } from 'svelte';
 
 	/**
 	 * EqVisualizer Component
@@ -7,10 +7,10 @@
 	 * Real-time frequency spectrum visualizer rendered on HTML5 Canvas.
 	 * Displays audio frequency data as vertical bars similar to equalizer visualizations.
 	 *
-	 * Purpose: Provide visual feedback of microphone input during recording.
+	 * Purpose: Provide visual feedback of microphone input during recording and playback audio.
 	 *
 	 * How It Works:
-	 * 1. Receives AnalyserNode from Web Audio API
+	 * 1. Receives AnalyserNode from Web Audio API (either as prop or from context)
 	 * 2. Extracts frequency bin data at 60 FPS via requestAnimationFrame
 	 * 3. Maps frequency bins to 32 bars (configurable)
 	 * 4. Renders bars with dynamic heights based on frequency magnitude
@@ -21,6 +21,7 @@
 	 * - High-DPI display support
 	 * - Configurable bar color
 	 * - Responsive width (fits container)
+	 * - Supports both recording (red) and playback (green) visualizations
 	 *
 	 * Technical Details:
 	 *
@@ -29,13 +30,18 @@
 	 * Performance: Frame time typically < 5ms on modern hardware
 	 *
 	 * Browser Support: Chrome/Edge 25+, Safari 13+, Firefox 25+, Opera 15+
+	 *
+	 * Analyzer Sources:
+	 * - During recording: Uses analyser prop (recording analyser from microphone stream)
+	 * - During playback: Uses analyser from audioPlayback context (playback analyser)
+	 * - Context is checked automatically and takes priority if available
 	 */
 
 	interface Props {
 		/** AudioContext instance (optional, for compatibility) */
 		audioContext?: AudioContext;
 
-		/** REQUIRED: AnalyserNode with connected audio stream */
+		/** REQUIRED: AnalyserNode with connected audio stream (typically recording analyser) */
 		analyser?: AnalyserNode;
 
 		/** Number of frequency bars (default: 32) */
@@ -76,8 +82,26 @@
 		mode = 'recording',
 	}: Props = $props();
 
-	// Auto-select bar color based on mode if not explicitly provided
-	const defaultBarColor = $derived(barColor ?? (mode === 'recording' ? '#ef4444' : '#10b981'));
+	// Try to get playback context (will be available if inside AudioPlaybackProvider)
+	let audioPlayback: { analyser: AnalyserNode | null } | null = $state(null);
+	try {
+		audioPlayback = getContext<{ analyser: AnalyserNode | null }>('audioPlayback');
+	} catch {
+		// Context not available (not inside AudioPlaybackProvider), that's fine
+		audioPlayback = null;
+	}
+
+	// Determine which analyser to use:
+	// Priority: playback analyser (if available and playing) > recording analyser > null
+	const activeAnalyser = $derived(audioPlayback?.analyser || analyser);
+
+	// Determine mode based on which analyser is active
+	const effectiveMode = $derived(audioPlayback?.analyser ? 'playback' : mode);
+
+	// Auto-select bar color based on effective mode if not explicitly provided
+	const defaultBarColor = $derived(
+		barColor ?? (effectiveMode === 'recording' ? '#ef4444' : '#10b981')
+	);
 
 	/** Canvas DOM reference */
 	let canvas: HTMLCanvasElement | undefined;
@@ -114,8 +138,8 @@
 		const bufferLength = fftSize / 2;
 
 		// If analyser is provided, configure it
-		if (analyser) {
-			analyser.fftSize = fftSize;
+		if (activeAnalyser) {
+			activeAnalyser.fftSize = fftSize;
 		}
 
 		// Pre-allocate frequency data array (reused every frame)
@@ -144,9 +168,9 @@
 			}
 
 			// Extract frequency bin data based on state
-			if (analyser && !disabled && !frozen) {
+			if (activeAnalyser && !disabled && !frozen) {
 				// Active: get live frequency data
-				analyser.getByteFrequencyData(dataArray);
+				activeAnalyser.getByteFrequencyData(dataArray);
 			} else if (frozen && frozenData) {
 				// Frozen: use preserved snapshot
 				dataArray.set(frozenData);
@@ -224,8 +248,8 @@
 							animationId = requestAnimationFrame(draw);
 						}
 
-						if (analyser && !disabled && !frozen) {
-							analyser.getByteFrequencyData(dataArray);
+						if (activeAnalyser && !disabled && !frozen) {
+							activeAnalyser.getByteFrequencyData(dataArray);
 						} else if (frozen && frozenData) {
 							dataArray.set(frozenData);
 						} else if (disabled) {

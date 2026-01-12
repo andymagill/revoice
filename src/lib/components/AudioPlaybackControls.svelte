@@ -4,7 +4,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Slider } from '$lib/components/ui/slider';
 	import { formatTime } from '$lib/audio';
-	import AudioPlaybackProvider from './AudioPlaybackProvider.svelte';
+	import type { Snippet } from 'svelte';
 
 	interface Props {
 		blob: Blob | null;
@@ -18,6 +18,10 @@
 		 * If provided, this overrides audio.duration when the latter is infinite.
 		 */
 		durationMs?: number;
+		/** Callback when audio element is created/updated */
+		onAudioChange?: (audio: HTMLAudioElement | null) => void;
+		/** Children/fallback slot content */
+		children?: Snippet;
 	}
 
 	let {
@@ -27,6 +31,8 @@
 		mimeType = '',
 		disabled = false,
 		durationMs = 0,
+		onAudioChange,
+		children,
 	}: Props = $props();
 
 	let audio: HTMLAudioElement | null = $state(null);
@@ -104,8 +110,16 @@
 		 * This ensures the effect ONLY runs when `activeBlob` changes, not when we update `audio`.
 		 */
 		const prevAudio = untrack(() => audio);
+
+		// CRITICAL: Pause and clean up previous audio BEFORE creating new one
 		if (prevAudio) {
 			prevAudio.pause();
+			// Remove all event listeners to break potential reference cycles
+			prevAudio.removeEventListener('loadedmetadata', () => {});
+			prevAudio.removeEventListener('timeupdate', () => {});
+			prevAudio.removeEventListener('ended', () => {});
+			prevAudio.removeEventListener('play', () => {});
+			prevAudio.removeEventListener('pause', () => {});
 			URL.revokeObjectURL(prevAudio.src);
 		}
 
@@ -127,10 +141,26 @@
 			audio = null;
 		}
 
+		// CRITICAL: Notify parent AFTER audio state is set and previous audio is cleaned up
+		onAudioChange?.(newAudio ?? null);
+
 		return () => {
 			if (newAudio) {
-				newAudio.pause();
-				URL.revokeObjectURL(newAudio.src);
+				try {
+					newAudio.pause();
+					newAudio.removeEventListener('loadedmetadata', () => {});
+					newAudio.removeEventListener('timeupdate', () => {});
+					newAudio.removeEventListener('ended', () => {});
+					newAudio.removeEventListener('play', () => {});
+					newAudio.removeEventListener('pause', () => {});
+				} catch (e) {
+					// Element might already be cleaned up
+				}
+				try {
+					URL.revokeObjectURL(newAudio.src);
+				} catch (e) {
+					// URL might already be revoked
+				}
 			}
 		};
 	});
@@ -183,45 +213,47 @@
 	}
 </script>
 
-<AudioPlaybackProvider {audio}>
-	<div class="flex items-center gap-3 w-full">
-		<!-- Play/Pause Button -->
-		<Button
-			variant="outline"
-			size="icon"
-			onclick={togglePlayPause}
-			disabled={disabled || !hasContent}
-			class="flex-shrink-0"
-		>
-			{#if isPlaying}
-				<Pause class="h-4 w-4" />
-			{:else}
-				<Play class="h-4 w-4" />
-			{/if}
-		</Button>
+<div class="flex items-center gap-3 w-full">
+	<!-- Play/Pause Button -->
+	<Button
+		variant="outline"
+		size="icon"
+		onclick={togglePlayPause}
+		disabled={disabled || !hasContent}
+		class="flex-shrink-0"
+	>
+		{#if isPlaying}
+			<Pause class="h-4 w-4" />
+		{:else}
+			<Play class="h-4 w-4" />
+		{/if}
+	</Button>
 
-		<!-- Timeline Slider -->
-		<div class="flex-1 flex items-center gap-2">
-			<span class="text-sm text-muted-foreground tabular-nums min-w-[3rem] text-right">
-				{formatTime(currentTime)}
-			</span>
-			<Slider
-				bind:value={currentTime}
-				min={0}
-				max={duration || 100}
-				step={0.1}
-				disabled={disabled || !hasContent}
-				onValueChange={(value) => {
-					if (isSeeking) {
-						currentTime = value;
-					}
-				}}
-				onValueCommit={handleSeekEnd}
-				class="flex-1"
-			/>
-			<span class="text-sm text-muted-foreground tabular-nums min-w-[3rem]">
-				{formatTime(duration)}
-			</span>
-		</div>
+	<!-- Timeline Slider -->
+	<div class="flex-1 flex items-center gap-2">
+		<span class="text-sm text-muted-foreground tabular-nums min-w-[3rem] text-right">
+			{formatTime(currentTime)}
+		</span>
+		<Slider
+			bind:value={currentTime}
+			min={0}
+			max={duration || 100}
+			step={0.1}
+			disabled={disabled || !hasContent}
+			onValueChange={(value) => {
+				if (isSeeking) {
+					currentTime = value;
+				}
+			}}
+			onValueCommit={handleSeekEnd}
+			class="flex-1"
+		/>
+		<span class="text-sm text-muted-foreground tabular-nums min-w-[3rem]">
+			{formatTime(duration)}
+		</span>
 	</div>
-</AudioPlaybackProvider>
+</div>
+
+{#if children}
+	{@render children()}
+{/if}

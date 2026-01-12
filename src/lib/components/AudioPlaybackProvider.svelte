@@ -48,48 +48,58 @@
 		const currentAudio = audio;
 
 		/**
-		 * CRITICAL FIX: UNTRACKING CLEANUP STATE
+		 * CRITICAL FIX: UNTRACKING ALL STATE MODIFICATIONS
 		 *
-		 * We use `untrack()` to read the current values of `mediaSource`, `analyser`, etc.
+		 * This effect ONLY depends on the `audio` prop.
+		 * All reads of `mediaSource`, `analyser`, and `audioContext` (which we modify)
+		 * are wrapped in `untrack()` to prevent circular dependencies.
 		 *
-		 * PROBLEM:
-		 * If we read `mediaSource` directly, this effect becomes dependent on it.
-		 * Later in this effect, we perform `mediaSource = null` or `mediaSource = ...`.
-		 * This circular dependency causes the effect to re-run infinitely, rapidly creating/destroying
-		 * Web Audio nodes until the browser crashes or runs out of memory.
+		 * PROBLEM PREVENTED:
+		 * If we read reactive state variables that we also WRITE to in the same effect,
+		 * the effect re-runs after the write, triggering the cleanup code again.
+		 * This creates an infinite loop.
 		 *
 		 * SOLUTION:
-		 * By untracking these reads, we ensure this effect ONLY runs when `audio` (the prop) changes.
-		 * This stabilizes the audio graph construction.
+		 * Use `untrack()` to read old values without registering dependencies.
+		 * This ensures the effect ONLY runs when `audio` (the prop) changes.
 		 */
-		const cleanupState = untrack(() => ({ mediaSource, analyser, audioContext }));
 
-		// Cleanup previous connection
-		if (cleanupState.mediaSource) {
+		// Read old state without creating dependencies
+		const oldMediaSource = untrack(() => mediaSource);
+		const oldAnalyser = untrack(() => analyser);
+		const oldAudioContext = untrack(() => audioContext);
+
+		// CRITICAL: Cleanup previous connection COMPLETELY before creating new one
+		if (oldMediaSource) {
 			try {
-				cleanupState.mediaSource.disconnect();
+				oldMediaSource.disconnect();
 			} catch (e) {
 				// Already disconnected
 			}
-			mediaSource = null;
 		}
 
-		if (cleanupState.analyser) {
+		if (oldAnalyser) {
 			try {
-				cleanupState.analyser.disconnect();
+				oldAnalyser.disconnect();
 			} catch (e) {
 				// Already disconnected
 			}
-			analyser = null;
 		}
 
 		isConnected = false;
+		mediaSource = null;
+		analyser = null;
+
+		// CRITICAL: Clear cache entry for old audio to force fresh connection setup
+		if (currentAudio && oldMediaSource) {
+			sourceNodeCache.delete(currentAudio);
+		}
 
 		// Setup new connection if audio element exists
 		if (currentAudio) {
 			try {
 				// Create or reuse AudioContext
-				let ctx = cleanupState.audioContext;
+				let ctx = oldAudioContext;
 				if (!ctx) {
 					ctx = new (window.AudioContext || (window as any).webkitAudioContext)() as AudioContext;
 					audioContext = ctx;
@@ -124,8 +134,6 @@
 				isConnected = true;
 			} catch (error) {
 				console.error('Failed to setup audio visualization:', error);
-				// If createMediaElementSource fails (already connected), we still need the connection
-				// This can happen if the element was already connected elsewhere
 				isConnected = false;
 			}
 		}

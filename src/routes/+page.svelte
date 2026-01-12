@@ -11,6 +11,8 @@
 	import { createMediaRecorder, getSupportedAudioFormat, getSharedAudioContext } from '$lib/audio';
 	import EqVisualizer from '$lib/components/EqVisualizer.svelte';
 	import AudioPlaybackControls from '$lib/components/AudioPlaybackControls.svelte';
+	import RecordingControls from '$lib/components/RecordingControls.svelte';
+	import AudioPlaybackProvider from '$lib/components/AudioPlaybackProvider.svelte';
 	import TranscriptionProvider from '$lib/components/TranscriptionProvider.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import {
@@ -20,7 +22,6 @@
 		CardHeader,
 		CardTitle,
 	} from '$lib/components/ui/card/index.js';
-	import { Mic } from 'lucide-svelte';
 	import type { TranscriptionResult } from '$lib/types';
 
 	/**
@@ -99,9 +100,10 @@
 	let stream: MediaStream | null = null;
 	let audioContext: AudioContext | null = $state(null);
 	let analyser: AnalyserNode | null = $state(null);
+	let currentAudioBlob: Blob | null = $state(null);
+	let playbackAudio: HTMLAudioElement | null = $state(null);
 	let engine: NativeEngine | null = $state(null);
 	let timerInterval: ReturnType<typeof setInterval> | null = null;
-	let currentAudioBlob: Blob | null = $state(null);
 
 	// Fetch audio blob when sessionId changes (for loading existing sessions)
 	$effect(() => {
@@ -376,115 +378,22 @@
 
 {#if engine}
 	<TranscriptionProvider {engine}>
-		<div class="max-w-6xl mx-auto space-y-6 px-4">
-			<!-- Recording Controls Section -->
-			<div class="lg:flex lg:gap-6 lg:items-start">
-				<!-- Left Column: Centered Controls -->
-				<div class="flex-1 flex flex-col items-center justify-center gap-4 py-8 lg:py-0">
-					<!-- Large Microphone Button with Animation -->
-					<div class="relative">
-						<!-- Rotating/Throbbing border when recording -->
-						{#if isRecording && !isPaused}
-							<div
-								class="absolute inset-0 rounded-full border-2 border-transparent border-t-red-500 border-r-red-500 pointer-events-none"
-								style="animation: spin 2s linear infinite;"
-							></div>
-							<div
-								class="absolute inset-0 rounded-full border-2 border-red-500 opacity-20 pointer-events-none"
-								style="animation: throb 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;"
-							></div>
-						{/if}
-
-						<!-- Main Button Circle -->
-						<button
-							onclick={handleMicClick}
-							class="
-							w-40 h-40 rounded-full flex items-center justify-center
-							transition-all duration-300 transform
-							{isRecording && !isPaused
-								? 'bg-red-500 text-white shadow-xl shadow-red-500/50 hover:shadow-2xl hover:shadow-red-500/70'
-								: isRecording && isPaused
-									? 'bg-amber-500 text-white shadow-xl shadow-amber-500/50 hover:shadow-2xl hover:amber-500/70'
-									: 'bg-blue-600 text-white hover:bg-blue-700 hover:scale-110 hover:shadow-2xl hover:shadow-blue-500/50 active:scale-95 shadow-lg'}
-							focus:outline-none focus:ring-4 focus:ring-offset-2
-							{isRecording && !isPaused
-								? 'focus:ring-red-500/50'
-								: isRecording && isPaused
-									? 'focus:ring-amber-500/50'
-									: 'focus:ring-blue-500/50'}
-						"
-							title={isRecording
-								? isPaused
-									? 'Click to resume recording'
-									: 'Click to pause recording'
-								: 'Click to start recording'}
-						>
-							<!-- Microphone Icon from lucide-svelte -->
-							<Mic class="w-20 h-20" strokeWidth={1.5} />
-						</button>
+		<AudioPlaybackProvider audio={playbackAudio}>
+			<div class="max-w-6xl mx-auto space-y-6 px-4">
+				<!-- Main Content Section: 3-column responsive layout -->
+				<div class="lg:grid lg:grid-cols-3 lg:gap-6 lg:items-start space-y-6 lg:space-y-0">
+					<!-- Left Column: Recording Controls (centered on mobile, left-aligned on desktop) -->
+					<div class="lg:col-span-1 flex justify-center lg:justify-start">
+						<RecordingControls
+							{recordingState}
+							{recordingTime}
+							onMicClick={handleMicClick}
+							onShowClearConfirm={() => (showClearConfirm = true)}
+						/>
 					</div>
 
-					<!-- Recording Time Display -->
-					<div class="text-center">
-						<div
-							class="text-5xl font-mono font-bold {isRecording && !isPaused
-								? 'text-red-500'
-								: isRecording && isPaused
-									? 'text-amber-500'
-									: 'text-gray-600'} transition-colors duration-300"
-						>
-							{formatTime(recordingTime)}
-						</div>
-					</div>
-
-					<!-- State Label and Clear Button -->
-					<div class="flex flex-col items-center gap-3">
-						<!-- Status Label below time -->
-						<p
-							class="text-sm font-medium {isRecording && !isPaused
-								? 'text-red-500'
-								: isRecording && isPaused
-									? 'text-amber-500'
-									: 'text-blue-600'} transition-colors duration-300"
-						>
-							{#if !isRecording}
-								Ready
-							{:else if isPaused}
-								Paused
-							{:else}
-								Recording
-							{/if}
-						</p>
-
-						<!-- Clear Recording Button (show during recording or paused) -->
-						{#if isActive}
-							<Button
-								onclick={() => (showClearConfirm = true)}
-								variant="outline"
-								size="sm"
-								class="flex items-center gap-2"
-							>
-								✕ Clear
-							</Button>
-						{/if}
-					</div>
-
-					<!-- Status Description -->
-					<p class="text-sm text-muted-foreground text-center max-w-xs">
-						{#if recordingState === 'idle'}
-							Record your voice and see real-time transcription
-						{:else if recordingState === 'paused'}
-							Paused. Use playback controls to review. Click mic to resume recording.
-						{:else}
-							Recording in progress. Click to pause and preview.
-						{/if}
-					</p>
-				</div>
-
-				<!-- Right Column: Playback Controls + EQ Visualizer (hidden on mobile) -->
-				<div class="hidden lg:flex lg:flex-1 lg:items-center lg:justify-center">
-					<div class="w-full space-y-4">
-						<!-- Playback Controls -->
+					<!-- Center Column: Playback Controls (full width on mobile, center on desktop) -->
+					<div class="lg:col-span-1">
 						<AudioPlaybackControls
 							blob={currentAudioBlob}
 							{headerChunk}
@@ -492,89 +401,83 @@
 							mimeType={getSupportedAudioFormat().mimeType}
 							disabled={recordingState === 'recording'}
 							durationMs={recordingTime}
-						/>
-
-						<!-- EQ Visualizer -->
-						<EqVisualizer
-							analyser={analyser ?? undefined}
-							barCount={32}
-							height={250}
-							mode="recording"
-							disabled={!isRecording}
-							frozen={isPaused}
+							onAudioChange={(audio) => (playbackAudio = audio)}
 						/>
 					</div>
+
+					<!-- Right Column: EQ Visualizer (recording visualizer) -->
+					<div class="lg:col-span-1">
+						<div class="space-y-2">
+							<p class="text-xs text-muted-foreground px-2">Recording Input</p>
+							<EqVisualizer
+								analyser={analyser ?? undefined}
+								barCount={32}
+								height={150}
+								mode="recording"
+								disabled={!isRecording}
+								frozen={isPaused}
+							/>
+						</div>
+					</div>
 				</div>
-			</div>
 
-			<!-- Mobile Playback Controls + EQ Visualizer (shown below controls on mobile) -->
-			<div class="lg:hidden space-y-4">
-				<!-- Playback Controls -->
-				<AudioPlaybackControls
-					blob={currentAudioBlob}
-					{headerChunk}
-					{audioChunks}
-					mimeType={getSupportedAudioFormat().mimeType}
-					disabled={recordingState === 'recording'}
-					durationMs={recordingTime}
-				/>
-
-				<!-- EQ Visualizer -->
-				<EqVisualizer
-					analyser={analyser ?? undefined}
-					barCount={32}
-					height={200}
-					mode="recording"
-					disabled={!isRecording}
-					frozen={isPaused}
-				/>
-			</div>
-
-			<!-- Confirmation Dialog -->
-			{#if showClearConfirm}
-				<div
-					class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-					role="button"
-					tabindex="0"
-					aria-label="Close dialog"
-					onclick={() => (showClearConfirm = false)}
-					onkeydown={(e) => {
-						if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') {
-							e.preventDefault();
-							showClearConfirm = false;
-						}
-					}}
-				>
-					<Card class="w-full max-w-sm mx-4" onclick={(e: MouseEvent) => e.stopPropagation()}>
-						<CardHeader>
-							<CardTitle>End Recording?</CardTitle>
-							<CardDescription>
-								{#if recordingState === 'paused'}
-									Your recording has been auto-saved. End this session to start a new recording?
-								{:else}
-									This will stop the current recording. Your audio will be saved. Continue?
-								{/if}
-							</CardDescription>
-						</CardHeader>
-						<CardContent class="flex gap-3">
-							<Button onclick={() => (showClearConfirm = false)} variant="outline" class="flex-1">
-								Cancel
-							</Button>
-							<Button onclick={confirmClearRecording} variant="destructive" class="flex-1">
-								Clear
-							</Button>
-						</CardContent>
-					</Card>
+				<!-- Playback Visualizer (Full width, shown when playing) -->
+				<div class="hidden lg:block">
+					<p class="text-xs text-muted-foreground px-2 mb-2">Playback Output</p>
+					<EqVisualizer
+						barCount={32}
+						height={120}
+						mode="playback"
+						disabled={false}
+						frozen={false}
+					/>
 				</div>
-			{/if}
 
-			<!-- Transcription Display -->
-			<Card>
-				<CardHeader>
-					<CardTitle class="text-lg">Transcript</CardTitle>
-				</CardHeader>
-				<CardContent>
-					<!--
+				<!-- Confirmation Dialog -->
+				{#if showClearConfirm}
+					<div
+						class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+						role="button"
+						tabindex="0"
+						aria-label="Close dialog"
+						onclick={() => (showClearConfirm = false)}
+						onkeydown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') {
+								e.preventDefault();
+								showClearConfirm = false;
+							}
+						}}
+					>
+						<Card class="w-full max-w-sm mx-4" onclick={(e: MouseEvent) => e.stopPropagation()}>
+							<CardHeader>
+								<CardTitle>End Recording?</CardTitle>
+								<CardDescription>
+									{#if recordingState === 'paused'}
+										Your recording has been auto-saved. End this session to start a new recording?
+									{:else}
+										This will stop the current recording. Your audio will be saved. Continue?
+									{/if}
+								</CardDescription>
+							</CardHeader>
+							<CardContent class="flex gap-3">
+								<Button onclick={() => (showClearConfirm = false)} variant="outline" class="flex-1">
+									Cancel
+								</Button>
+								<Button onclick={confirmClearRecording} variant="destructive" class="flex-1">
+									Clear
+								</Button>
+							</CardContent>
+						</Card>
+					</div>
+				{/if}
+
+				<!-- Transcription Display -->
+				<Card>
+					<CardHeader>
+						<CardTitle class="text-lg">Transcript</CardTitle>
+					</CardHeader>
+					<CardContent>
+						<!--
 				DISPLAY RENDERING PATTERN
 				
 				This component renders transcription results in a chat-like interface:
@@ -595,52 +498,53 @@
 				- Alignment (right vs left) shows status
 				- Color scheme differentiates temporary vs permanent
 			-->
-					{#if finalResults.length === 0 && !currentInterim}
-						<p class="text-muted-foreground text-center py-8">
-							No transcription yet. Start recording to begin.
-						</p>
-					{:else}
-						<div class="space-y-3">
-							<!-- FINAL RESULTS: Immutable list of completed transcriptions -->
-							{#each finalResults as item, idx (idx)}
-								<div class="flex justify-end">
-									<div class="bg-primary text-primary-foreground rounded-lg px-4 py-2 max-w-xs">
-										<p class="text-sm">{item.text}</p>
-										{#if item.confidence !== undefined}
-											<p class="text-xs text-primary-foreground/70 mt-1">
-												Confidence: {(item.confidence * 100).toFixed(0)}%
-											</p>
-										{/if}
+						{#if finalResults.length === 0 && !currentInterim}
+							<p class="text-muted-foreground text-center py-8">
+								No transcription yet. Start recording to begin.
+							</p>
+						{:else}
+							<div class="space-y-3">
+								<!-- FINAL RESULTS: Immutable list of completed transcriptions -->
+								{#each finalResults as item, idx (idx)}
+									<div class="flex justify-end">
+										<div class="bg-primary text-primary-foreground rounded-lg px-4 py-2 max-w-xs">
+											<p class="text-sm">{item.text}</p>
+											{#if item.confidence !== undefined}
+												<p class="text-xs text-primary-foreground/70 mt-1">
+													Confidence: {(item.confidence * 100).toFixed(0)}%
+												</p>
+											{/if}
+										</div>
 									</div>
-								</div>
-							{/each}
+								{/each}
 
-							<!-- 
+								<!-- 
 						CURRENT INTERIM RESULT:
 						Only one interim result exists at any time (not an array).
 						It updates in place as the user speaks, creating a "typewriter" effect.
 						Once finalized, it moves to the finalResults array above.
 						The opacity-70 class provides visual feedback that this is temporary.
 					-->
-							{#if currentInterim}
-								<div class="flex justify-start">
-									<div
-										class="bg-accent/10 text-foreground rounded-lg px-4 py-2 max-w-xs opacity-70"
-									>
-										<p class="text-sm">{currentInterim.text}</p>
-										{#if currentInterim.confidence !== undefined}
-											<p class="text-xs text-muted-foreground mt-1">
-												Confidence: {(currentInterim.confidence * 100).toFixed(0)}%
-											</p>
-										{/if}
+								{#if currentInterim}
+									<div class="flex justify-start">
+										<div
+											class="bg-accent/10 text-foreground rounded-lg px-4 py-2 max-w-xs opacity-70"
+										>
+											<p class="text-sm">{currentInterim.text}</p>
+											{#if currentInterim.confidence !== undefined}
+												<p class="text-xs text-muted-foreground mt-1">
+													Confidence: {(currentInterim.confidence * 100).toFixed(0)}%
+												</p>
+											{/if}
+										</div>
 									</div>
-								</div>
-							{/if}
-						</div>
-					{/if}
-				</CardContent>
-			</Card>
-		</div>
+								{/if}
+							</div>
+						{/if}
+					</CardContent>
+				</Card>
+			</div>
+		</AudioPlaybackProvider>
 	</TranscriptionProvider>
 {/if}
 
