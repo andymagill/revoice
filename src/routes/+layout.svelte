@@ -37,6 +37,10 @@
 	});
 
 	async function deleteSession(id: number) {
+		// Confirm before deleting
+		if (!confirm('Delete this session? This cannot be undone.')) {
+			return;
+		}
 		const { deleteSession: deleteSessionDB } = await import('$lib/db');
 		await deleteSessionDB(id);
 		sessions = await getAllSessions();
@@ -66,6 +70,14 @@
 	}
 
 	async function handleNewSession() {
+		// Stop any playing audio
+		if (playingAudio) {
+			playingAudio.pause();
+			playingAudio = null;
+		}
+		// Clear playback state
+		currentPlayingSessionId = null;
+		// Reset current session context
 		currentSession = null;
 	}
 
@@ -87,7 +99,11 @@
 		{#if sidebarOpen}
 			<div
 				class="fixed inset-0 bg-black/50 z-40 md:hidden"
+				role="button"
+				tabindex="0"
 				onclick={() => (sidebarOpen = false)}
+				onkeydown={(e: KeyboardEvent) => e.key === 'Escape' && (sidebarOpen = false)}
+				aria-label="Close sidebar"
 			></div>
 		{/if}
 
@@ -122,17 +138,6 @@
 									<Button
 										onclick={(e: MouseEvent) => {
 											e.stopPropagation();
-											playSession(session);
-										}}
-										variant="ghost"
-										size="sm"
-										class="h-6 px-1 text-accent"
-									>
-										▶
-									</Button>
-									<Button
-										onclick={(e: MouseEvent) => {
-											e.stopPropagation();
 											deleteSession(session.id!);
 										}}
 										variant="ghost"
@@ -151,6 +156,11 @@
 			<div class="p-4 border-t border-border">
 				<Button
 					onclick={async () => {
+						if (
+							!confirm('This will permanently delete all recorded sessions and audio. Continue?')
+						) {
+							return;
+						}
 						const { clearAllData } = await import('$lib/db');
 						await clearAllData();
 						sessions = [];
