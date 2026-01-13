@@ -99,7 +99,11 @@
 		{#if sidebarOpen}
 			<div
 				class="fixed inset-0 bg-black/50 z-40 md:hidden"
+				role="button"
+				tabindex="0"
 				onclick={() => (sidebarOpen = false)}
+				onkeydown={(e: KeyboardEvent) => e.key === 'Escape' && (sidebarOpen = false)}
+				aria-label="Close sidebar"
 			></div>
 		{/if}
 
@@ -131,17 +135,6 @@
 							<div class="flex justify-between items-center mt-2 text-xs text-muted-foreground">
 								<span>{formatTime(session.duration)}</span>
 								<div class="space-x-1">
-									<Button
-										onclick={(e: MouseEvent) => {
-											e.stopPropagation();
-											playSession(session);
-										}}
-										variant="ghost"
-										size="sm"
-										class="h-6 px-1 text-accent"
-									>
-										▶
-									</Button>
 									<Button
 										onclick={(e: MouseEvent) => {
 											e.stopPropagation();

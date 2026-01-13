@@ -117,31 +117,49 @@
 		'currentSession'
 	);
 
-	// Fetch audio blob when sessionId changes (for loading existing sessions)
-	$effect(() => {
-		if (sessionId && recordingState === 'idle' && !currentAudioBlob) {
-			// Load audio blob for playback from database (for existing sessions)
-			getSessionAudio(sessionId)
-				.then((blob) => {
-					if (blob) {
-						currentAudioBlob = blob;
-					}
-				})
-				.catch((error) => {
-					console.error('Failed to load audio blob:', error);
-				});
-		}
-		// Note: Don't clear blob when paused - that's when we want playback!
-	});
-
 	// Load session data when currentSession changes from sidebar selection
+	/**
+	 * CRITICAL: This effect responds to context changes from the layout sidebar.
+	 * It handles TWO distinct use cases:
+	 *
+	 * 1. USER CLICKS SESSION IN SIDEBAR (selectedSession?.id is set):
+	 *    - Load blob from IndexedDB
+	 *    - Load transcripts from database
+	 *    - Set local sessionId to loaded session ID
+	 *    - Reset recordingState to 'idle' (not recording the loaded session)
+	 *
+	 * 2. USER CLICKS "NEW SESSION" BUTTON (selectedSession === null):
+	 *    - ONLY clear state if NOT actively recording AND no local session exists
+	 *    - This prevents accidentally clearing transcripts during pause
+	 *
+	 * REGRESSION RISK: If you remove the guards (!isRecording && sessionId === null),
+	 * this effect will clear finalResults whenever currentSession becomes null,
+	 * which happens after pausing a new recording (before it's saved to DB and
+	 * shown in sidebar). This causes the "transcripts disappear on pause" bug.
+	 *
+	 * WHY THE GUARDS ARE CRITICAL:
+	 * - New sessions don't set currentSession in the layout (they're local-only)
+	 * - After pause, we save to DB but currentSession stays null
+	 * - Without guards, the effect would wipe finalResults after each pause
+	 * - With guards, we only clear if user explicitly clicked New Session button
+	 */
 	$effect(() => {
 		const selectedSession = sessionContext?.current;
+		console.log('[+page.svelte] Session selection effect triggered:', {
+			selectedSessionId: selectedSession?.id ?? null,
+			currentSessionId: sessionId,
+			isRecording,
+		});
 		if (selectedSession?.id) {
 			(async () => {
 				try {
 					// Load the audio blob for this session
+					console.log('[+page.svelte] Loading blob from sidebar selection:', selectedSession.id);
 					const blob = await getSessionAudio(selectedSession.id!);
+					console.log('[+page.svelte] Blob loaded from sidebar:', {
+						blobExists: blob !== null,
+						blobSize: blob?.size ?? null,
+					});
 					if (blob) {
 						currentAudioBlob = blob;
 					}
@@ -168,9 +186,9 @@
 					console.error('Failed to load session data:', error);
 				}
 			})();
-		} else if (selectedSession === null) {
-			// New Session clicked - clear all playback and recording state
-			sessionId = null;
+		} else if (selectedSession === null && !isRecording && sessionId === null) {
+			// New Session clicked - only clear state if conditions are met
+			// Guards prevent clearing during active recording or when local session exists
 			currentAudioBlob = null;
 			if (playbackAudio) {
 				playbackAudio.pause();
@@ -180,10 +198,7 @@
 			currentInterim = null;
 			recordingTime = 0;
 			sessionDuration = 0;
-			// Only reset if not currently recording
-			if (recordingState !== 'recording') {
-				recordingState = 'idle';
-			}
+			recordingState = 'idle';
 		}
 	});
 
@@ -247,6 +262,11 @@
 
 			mediaRecorder.ondataavailable = (event) => {
 				if (event.data.size > 0) {
+					console.log('[+page.svelte] Chunk received:', {
+						size: event.data.size,
+						type: event.data.type,
+						chunkCount: audioChunks.length + 1,
+					});
 					// Store first chunk separately - it contains essential container headers
 					if (!headerChunk) {
 						headerChunk = event.data;
@@ -322,6 +342,7 @@
 							}
 						} else {
 							// Update current interim result (replaces previous interim)
+							currentInterim = result;
 						}
 					}
 				});
@@ -427,13 +448,32 @@
 
 			// Create and save blob from accumulated chunks on pause
 			// This ensures audio is persisted and available for playback
+			console.log('[+page.svelte] Pausing recording:', {
+				sessionId,
+				audioChunksCount: audioChunks.length,
+				totalChunkSize: audioChunks.reduce((sum, chunk) => sum + chunk.size, 0),
+			});
+
 			if (sessionId && audioChunks.length > 0) {
 				const format = getSupportedAudioFormat();
 				const audioBlob = new Blob(audioChunks, { type: format.mimeType });
 
+				console.log('[+page.svelte] Created blob for playback:', {
+					sessionId,
+					blobSize: audioBlob.size,
+					blobType: audioBlob.type,
+					mimeType: format.mimeType,
+				});
+
 				// Save to IndexedDB
 				await storeAudioData(sessionId, audioBlob);
 				currentAudioBlob = audioBlob;
+
+				console.log('[+page.svelte] Audio saved, currentAudioBlob set:', {
+					currentAudioBlobSize: currentAudioBlob.size,
+					currentAudioBlobType: currentAudioBlob.type,
+					isBlobStillValid: currentAudioBlob instanceof Blob,
+				});
 
 				// Update session duration
 				const duration = Date.now() - (startTime || 0);
@@ -503,6 +543,15 @@
 	}
 
 	let startTime: number | null = null;
+
+	// Debug: log currentAudioBlob changes
+	$effect(() => {
+		console.log('[+page.svelte] currentAudioBlob state changed:', {
+			blobExists: currentAudioBlob !== null,
+			blobSize: currentAudioBlob?.size ?? null,
+			isBlobValid: currentAudioBlob instanceof Blob,
+		});
+	});
 </script>
 
 {#if engine}

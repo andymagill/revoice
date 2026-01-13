@@ -59,41 +59,43 @@
 	// Determine if we have playable content (either blob or header chunk when not disabled)
 	const hasContent = $derived(activeBlob !== null || (!disabled && headerChunk !== null));
 
-	// Event handlers (defined outside effect to prevent circular dependencies)
-	const handleLoadedMetadata = (el: HTMLAudioElement) => {
-		if (Number.isFinite(el.duration) && el.duration > 0) {
-			duration = el.duration;
-		} else if (durationMs > 0) {
-			// Fallback to explicit duration if metadata is missing/infinite (common with WebM blobs)
-			duration = durationMs / 1000;
-		} else {
-			// Ensure duration has a sane fallback for slider
-			duration = Math.max(1, duration);
-		}
-	};
-
-	const handleTimeUpdate = (el: HTMLAudioElement) => {
-		if (!isSeeking) {
-			currentTime = el.currentTime;
-		}
-	};
-
-	const handleEnded = () => {
-		isPlaying = false;
-		currentTime = 0;
-	};
-
-	const handlePlay = () => {
-		isPlaying = true;
-	};
-
-	const handlePause = () => {
-		isPlaying = false;
-	};
-
 	// Create audio element when blob is provided
+	/**
+	 * BLOB URL LIFECYCLE MANAGEMENT
+	 *
+	 * This effect manages creation and cleanup of blob URLs with critical timing constraints:
+	 *
+	 * PROBLEM FIXED:
+	 * - Creating audio elements from blob URLs can fail with ERR_FILE_NOT_FOUND
+	 * - This happens when blob URLs are revoked too early or at the wrong time
+	 * - Especially critical for new recordings where timing is tight (pause → play)
+	 *
+	 * SOLUTION PATTERN:
+	 * 1. Create new audio element from blob URL IMMEDIATELY
+	 * 2. Only revoke PREVIOUS audio's URL (not the current one)
+	 * 3. Check if URL is actually a blob URL before revoking (safety check)
+	 * 4. Wrap in try-catch to handle creation failures gracefully
+	 *
+	 * CRITICAL DETAILS:
+	 * - Blob URLs (blob:http://...) are only valid while referenced by an element
+	 * - Revoking too early = ERR_FILE_NOT_FOUND (404)
+	 * - We must keep the URL alive while audio element is active
+	 * - Only revoke when transitioning to a new audio element
+	 *
+	 * REGRESSION RISK:
+	 * - If you move URL.revokeObjectURL after setting audio = newAudio, URLs may
+	 *   be revoked before audio.play() is called
+	 * - If you revoke in the cleanup function, URLs get revoked while audio might
+	 *   still be loading or playing
+	 * - If you remove the blob: check, you might try to revoke non-blob URLs
+	 */
 	$effect(() => {
 		const currentBlob = activeBlob;
+
+		console.log('[AudioPlaybackControls] Effect triggered:', {
+			activeBlobExists: currentBlob !== null,
+			activeBlobSize: currentBlob?.size ?? null,
+		});
 
 		/**
 		 * CRITICAL FIX: UNTRACKING DEPENDENCIES
@@ -123,23 +125,73 @@
 			prevAudio.removeEventListener('ended', () => {});
 			prevAudio.removeEventListener('play', () => {});
 			prevAudio.removeEventListener('pause', () => {});
-			URL.revokeObjectURL(prevAudio.src);
+			// SAFETY: Only revoke blob URLs (not data: or http: URLs)
+			// This prevents attempting to revoke non-revocable URLs
+			const prevUrl = prevAudio.src;
+			if (prevUrl && prevUrl.startsWith('blob:')) {
+				URL.revokeObjectURL(prevUrl);
+			}
 		}
 
 		let newAudio: HTMLAudioElement | null = null;
 
 		if (currentBlob) {
-			const url = URL.createObjectURL(currentBlob);
-			newAudio = new Audio(url);
+			try {
+				const url = URL.createObjectURL(currentBlob);
+				newAudio = new Audio(url);
+				console.log('[AudioPlaybackControls] Created audio element:', {
+					blobSize: currentBlob.size,
+					blobType: currentBlob.type,
+					url,
+					durationMs,
+					audioReady: newAudio.readyState,
+				});
 
-			// Setup event listeners using the handler functions
-			newAudio.addEventListener('loadedmetadata', () => handleLoadedMetadata(newAudio!));
-			newAudio.addEventListener('timeupdate', () => handleTimeUpdate(newAudio!));
-			newAudio.addEventListener('ended', handleEnded);
-			newAudio.addEventListener('play', handlePlay);
-			newAudio.addEventListener('pause', handlePause);
+				// Setup event listeners with inline handlers that capture current state
+				// Use untrack() so reading durationMs doesn't create a dependency on this effect
+				newAudio.addEventListener('loadedmetadata', (event) => {
+					const el = event.target as HTMLAudioElement;
+					const currentDurationMs = untrack(() => durationMs);
+					console.log('[AudioPlaybackControls] loadedmetadata event fired:', {
+						duration: el.duration,
+						readyState: el.readyState,
+					});
+					if (Number.isFinite(el.duration) && el.duration > 0) {
+						duration = el.duration;
+					} else if (currentDurationMs > 0) {
+						// Fallback to explicit duration if metadata is missing/infinite (common with WebM blobs)
+						duration = currentDurationMs / 1000;
+					} else {
+						// Ensure duration has a sane fallback for slider
+						duration = Math.max(1, duration);
+					}
+				});
 
-			audio = newAudio;
+				newAudio.addEventListener('timeupdate', (event) => {
+					const el = event.target as HTMLAudioElement;
+					if (!isSeeking) {
+						currentTime = el.currentTime;
+					}
+				});
+
+				newAudio.addEventListener('ended', () => {
+					isPlaying = false;
+					currentTime = 0;
+				});
+
+				newAudio.addEventListener('play', () => {
+					isPlaying = true;
+				});
+
+				newAudio.addEventListener('pause', () => {
+					isPlaying = false;
+				});
+
+				audio = newAudio;
+			} catch (error) {
+				console.error('[AudioPlaybackControls] Failed to create audio element:', error);
+				audio = null;
+			}
 		} else {
 			audio = null;
 		}
@@ -148,6 +200,10 @@
 		onAudioChange?.(newAudio ?? null);
 
 		return () => {
+			console.log('[AudioPlaybackControls] Effect cleanup running:', {
+				hasNewAudio: newAudio !== null,
+				audioSrc: newAudio?.src ?? null,
+			});
 			if (newAudio) {
 				try {
 					newAudio.pause();
@@ -159,11 +215,9 @@
 				} catch (e) {
 					// Element might already be cleaned up
 				}
-				try {
-					URL.revokeObjectURL(newAudio.src);
-				} catch (e) {
-					// URL might already be revoked
-				}
+				// DON'T revoke blob URLs here - it's too aggressive
+				// The browser will clean up the blob when it's no longer referenced
+				// Only revoke when we're absolutely sure it's done loading
 			}
 		};
 	});
@@ -171,16 +225,29 @@
 	function togglePlayPause() {
 		if (disabled) return;
 
+		console.log('[AudioPlaybackControls] togglePlayPause called:', {
+			activeBlob: activeBlob ? `Blob(${activeBlob.size} bytes)` : null,
+			audio: audio ? 'exists' : 'null',
+			audioChunks: audioChunks.length,
+			isPlaying,
+		});
+
 		// If we don't have a blob yet but have chunks, construct the full blob
 		if (!activeBlob && audioChunks.length > 0 && mimeType) {
+			console.log('[AudioPlaybackControls] Constructing blob from chunks...');
 			// Construct blob from all chunks to ensure full playback duration
 			// The first chunk contains the initialization header, subsequent chunks are appended
 			const audioBlob = new Blob(audioChunks, { type: mimeType });
+			console.log('[AudioPlaybackControls] Created blob from chunks:', {
+				size: audioBlob.size,
+				type: audioBlob.type,
+			});
 			localBlob = audioBlob;
 
 			// Wait for the effect to run and create audio element, then play
 			setTimeout(() => {
 				if (audio) {
+					console.log('[AudioPlaybackControls] Playing audio from chunks...');
 					audio.play().catch((error) => {
 						console.error('Failed to play audio:', error);
 					});
@@ -189,11 +256,16 @@
 			return;
 		}
 
-		if (!audio) return;
+		if (!audio) {
+			console.log('[AudioPlaybackControls] No audio element available');
+			return;
+		}
 
 		if (isPlaying) {
+			console.log('[AudioPlaybackControls] Pausing audio');
 			audio.pause();
 		} else {
+			console.log('[AudioPlaybackControls] Playing audio');
 			audio.play().catch((error) => {
 				console.error('Failed to play audio:', error);
 			});
