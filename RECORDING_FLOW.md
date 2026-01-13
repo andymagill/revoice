@@ -333,27 +333,61 @@ recording → idle       // Clear session (saves first)
 
 ### MediaRecorder Chunk Management
 
+The save-on-pause implementation uses a robust flush-and-wait pattern to ensure all audio data is captured before constructing the final blob:
+
 ```javascript
-// Chunks accumulate across pause/resume cycles
-let audioChunks: Blob[] = [];
+// Helper function to ensure final chunk is received
+function flushRecorderAndWait(recorder: MediaRecorder): Promise<void> {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      recorder.removeEventListener('dataavailable', handler);
+      resolve();
+    }, 1000);
 
-// On data available (continuous)
-mediaRecorder.ondataavailable = (event) => {
-  audioChunks.push(event.data);
-};
+    const handler = (event: BlobEvent) => {
+      if (event.data.size > 0) {
+        clearTimeout(timeout);
+        recorder.removeEventListener('dataavailable', handler);
+        resolve();
+      }
+    };
 
-// On pause (flush remaining data)
+    recorder.addEventListener('dataavailable', handler, { once: true });
+  });
+}
+
+// On pause (flush remaining data and wait)
 mediaRecorder.requestData(); // Forces final chunk
-mediaRecorder.pause();
+await flushRecorderAndWait(mediaRecorder); // Wait for final chunk
 
-// Create blob from ALL chunks
+// Now safe to create blob from ALL chunks
 const blob = new Blob(audioChunks, { type: format.mimeType });
 await storeAudioData(sessionId, blob);
+await updateSessionDuration(sessionId, duration);
+
+// Best-effort localStorage backup (base64) for recovery
+try {
+  const base64 = await blobToBase64(audioBlob);
+  localStorage.setItem(`revoice-backup-${sessionId}`, base64);
+} catch (backupError) {
+  // Non-critical: localStorage may be full
+  console.warn('Failed to create localStorage backup:', backupError);
+}
+
+// Only update state after save is complete
+recordingState = 'paused';
 
 // On resume
 mediaRecorder.resume();
 // Chunks continue accumulating in same array
 ```
+
+**Key Implementation Details:**
+
+- `flushRecorderAndWait()` attaches a one-time event handler to avoid race conditions
+- Includes 1-second timeout fallback if event is not emitted
+- localStorage backup is best-effort (wrapped in try-catch) for recovery scenarios
+- State transition to 'paused' happens only after save completes, ensuring UI consistency
 
 ### Audio Playback Provider Pattern
 

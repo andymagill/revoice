@@ -61,11 +61,14 @@
 
 	// Event handlers (defined outside effect to prevent circular dependencies)
 	const handleLoadedMetadata = (el: HTMLAudioElement) => {
-		if (Number.isFinite(el.duration)) {
+		if (Number.isFinite(el.duration) && el.duration > 0) {
 			duration = el.duration;
 		} else if (durationMs > 0) {
 			// Fallback to explicit duration if metadata is missing/infinite (common with WebM blobs)
 			duration = durationMs / 1000;
+		} else {
+			// Ensure duration has a sane fallback for slider
+			duration = Math.max(1, duration);
 		}
 	};
 
@@ -231,7 +234,7 @@
 
 	<!-- Timeline Slider -->
 	<div class="flex-1 flex items-center gap-2">
-		<span class="text-sm text-muted-foreground tabular-nums min-w-[3rem] text-right">
+		<span class="text-sm text-foreground tabular-nums min-w-[3rem] text-right">
 			{formatTime(currentTime)}
 		</span>
 		<Slider
@@ -246,9 +249,9 @@
 				}
 			}}
 			onValueCommit={handleSeekEnd}
-			class="flex-1"
+			class="flex-1 playback-slider"
 		/>
-		<span class="text-sm text-muted-foreground tabular-nums min-w-[3rem]">
+		<span class="text-sm text-foreground tabular-nums min-w-[3rem]">
 			{formatTime(duration)}
 		</span>
 	</div>
@@ -257,3 +260,10 @@
 {#if children}
 	{@render children()}
 {/if}
+
+<style>
+	:global(.playback-slider) {
+		--slider-track-color: hsl(var(--muted));
+		--slider-range-color: hsl(var(--primary));
+	}
+</style>

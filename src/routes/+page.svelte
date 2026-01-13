@@ -10,7 +10,12 @@
 		type Session,
 	} from '$lib/db';
 	import { NativeEngine } from '$lib/engines/native';
-	import { createMediaRecorder, getSupportedAudioFormat, getSharedAudioContext } from '$lib/audio';
+	import {
+		createMediaRecorder,
+		getSupportedAudioFormat,
+		getSharedAudioContext,
+		blobToBase64,
+	} from '$lib/audio';
 	import EqVisualizer from '$lib/components/EqVisualizer.svelte';
 	import AudioPlaybackControls from '$lib/components/AudioPlaybackControls.svelte';
 	import RecordingControls from '$lib/components/RecordingControls.svelte';
@@ -171,6 +176,35 @@
 		}
 	});
 
+	/**
+	 * Helper to flush MediaRecorder and wait for final dataavailable event
+	 *
+	 * This ensures we don't construct the blob before MediaRecorder has
+	 * emitted all pending data. Returns a Promise that resolves when the
+	 * next dataavailable event fires, or after 1 second timeout as fallback.
+	 *
+	 * @param recorder - Active MediaRecorder instance
+	 * @returns Promise that resolves when flush is complete
+	 */
+	function flushRecorderAndWait(recorder: MediaRecorder): Promise<void> {
+		return new Promise((resolve) => {
+			const timeout = setTimeout(() => {
+				recorder.removeEventListener('dataavailable', handler);
+				resolve();
+			}, 1000);
+
+			const handler = (event: BlobEvent) => {
+				if (event.data.size > 0) {
+					clearTimeout(timeout);
+					recorder.removeEventListener('dataavailable', handler);
+					resolve();
+				}
+			};
+
+			recorder.addEventListener('dataavailable', handler, { once: true });
+		});
+	}
+
 	async function startRecording() {
 		if (isRecording) return;
 
@@ -316,7 +350,11 @@
 
 			// Audio already saved to IndexedDB (on pause), just update duration
 			if (sessionId && recordingState === 'recording') {
-				// If clearing from recording state (not paused), do final save
+				// If clearing from recording state (not paused), do final save with flush
+				if (mediaRecorder) {
+					mediaRecorder.requestData();
+					await flushRecorderAndWait(mediaRecorder);
+				}
 				const format = getSupportedAudioFormat();
 				const audioBlob = new Blob(audioChunks, { type: format.mimeType });
 				await storeAudioData(sessionId, audioBlob);
@@ -342,7 +380,7 @@
 		}
 	}
 
-	function pauseRecording() {
+	async function pauseRecording() {
 		if (recordingState !== 'recording' || !mediaRecorder) return;
 		try {
 			suppressTranscriptionErrors = true;
@@ -363,27 +401,37 @@
 			// Pause mediaRecorder
 			mediaRecorder.pause();
 
-			// Update state
-			recordingState = 'paused';
-
-			// Request one final data flush
+			// Request one final data flush and wait for it
 			mediaRecorder.requestData();
+			await flushRecorderAndWait(mediaRecorder);
 
 			// Create and save blob from accumulated chunks on pause
 			// This ensures audio is persisted and available for playback
 			if (sessionId && audioChunks.length > 0) {
 				const format = getSupportedAudioFormat();
 				const audioBlob = new Blob(audioChunks, { type: format.mimeType });
-				// Save the blob (this will overwrite previous blob if resuming an existing session)
-				storeAudioData(sessionId, audioBlob)
-					.then(() => {
-						currentAudioBlob = audioBlob;
-						console.log('Audio saved on pause');
-					})
-					.catch((error) => {
-						console.error('Failed to save audio on pause:', error);
-					});
+
+				// Save to IndexedDB
+				await storeAudioData(sessionId, audioBlob);
+				currentAudioBlob = audioBlob;
+
+				// Update session duration
+				const duration = Date.now() - (startTime || 0);
+				await updateSessionDuration(sessionId, duration);
+
+				// Best-effort localStorage backup (base64) for recovery
+				try {
+					const base64 = await blobToBase64(audioBlob);
+					localStorage.setItem(`revoice-backup-${sessionId}`, base64);
+					console.log('Audio saved to IndexedDB and localStorage backup created');
+				} catch (backupError) {
+					// Non-critical: localStorage may be full or unavailable
+					console.warn('Failed to create localStorage backup:', backupError);
+				}
 			}
+
+			// Only update state after save is complete
+			recordingState = 'paused';
 		} catch (error) {
 			console.error('Error pausing recording:', error);
 		}
