@@ -2,6 +2,10 @@
 
 A proof-of-concept browser-based voice transcription application leveraging native browser APIs for speed, portability, and privacy-first audio handling.
 
+## Demo
+
+🚀 **[Launch the live demo](https://revoice.magill.dev)**
+
 ## Overview
 
 ReVoice is designed to demonstrate the capabilities of modern browser APIs for real-time voice transcription. It avoids heavy local AI models in favor of the **Web Speech API** for fast transcription and **MediaRecorder API** for transparent audio persistence, all within the browser's security context.
