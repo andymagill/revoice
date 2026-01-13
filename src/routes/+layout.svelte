@@ -115,7 +115,7 @@
 		>
 			<div class="p-4 border-b border-border">
 				<h1 class="text-xl font-bold text-foreground">ReVoice</h1>
-				<p class="text-xs text-muted-foreground mt-1">Voice Transcription</p>
+				<p class="text-xs text-muted-foreground mt-1">Recording & Transcription</p>
 			</div>
 
 			<div class="flex-1 overflow-y-auto p-4 space-y-2">
