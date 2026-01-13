@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { tv, type VariantProps } from 'tailwind-variants';
+	import { onMount } from 'svelte';
 	import type { Snippet } from 'svelte';
 
 	const slider = tv({
@@ -7,8 +8,13 @@
 			root: 'relative flex w-full touch-none select-none items-center',
 			track: 'relative h-2 w-full grow overflow-hidden rounded-full bg-secondary',
 			range: 'absolute h-full bg-primary',
+			// CRITICAL: Thumb MUST have 'absolute' positioning to work with the 'left' style calculation.
+			// Without 'absolute', the thumb would flow inline and ignore the left/transform positioning.
+			// The 'top-1/2 -translate-y-1/2' centers it vertically on the track.
+			// Regression risk: If 'absolute' is removed, the thumb will appear stuck at the right side
+			// and won't visually move even though the value updates internally.
 			thumb:
-				'block h-5 w-5 rounded-full border-2 border-primary bg-background ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50',
+				'absolute block h-5 w-5 rounded-full border-2 border-primary bg-background ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 top-1/2 -translate-y-1/2',
 		},
 		variants: {
 			size: {
@@ -76,28 +82,43 @@
 		// Clamp to min/max
 		newValue = Math.max(min, Math.min(max, newValue));
 
+		console.log('[Slider] updateValue:', {
+			clientX,
+			trackRect: rect,
+			x,
+			percent,
+			newValue,
+			oldValue: value,
+			max,
+			min,
+		});
+
 		if (newValue !== value) {
 			value = newValue;
+			console.log('[Slider] Value updated:', newValue);
 			onValueChange?.(newValue);
 		}
 	}
 
 	function handlePointerDown(e: PointerEvent) {
 		if (disabled) return;
+		console.log('[Slider] pointerdown event:', { target: e.currentTarget, clientX: e.clientX });
 		isDragging = true;
-		(e.target as HTMLElement).setPointerCapture(e.pointerId);
+		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 		updateValue(e.clientX);
 	}
 
 	function handlePointerMove(e: PointerEvent) {
 		if (!isDragging || disabled) return;
+		console.log('[Slider] pointermove event:', { clientX: e.clientX, isDragging });
 		updateValue(e.clientX);
 	}
 
 	function handlePointerUp(e: PointerEvent) {
 		if (!isDragging) return;
+		console.log('[Slider] pointerup event');
 		isDragging = false;
-		(e.target as HTMLElement).releasePointerCapture(e.pointerId);
+		(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
 		onValueCommit?.(value);
 	}
 
@@ -142,6 +163,14 @@
 			onValueCommit?.(newValue);
 		}
 	}
+
+	// Setup proper event delegation
+	let thumbButton: HTMLButtonElement | null = $state(null);
+
+	onMount(() => {
+		// No need for document-level listeners - pointer capture handles it
+		return () => {};
+	});
 </script>
 
 <div class={root({ class: className })}>
@@ -155,7 +184,10 @@
 	>
 		<div class={rangeClass()} style="width: {percentage}%"></div>
 	</div>
+	<!-- Thumb slider button with absolute positioning for visual drag handle -->
+	<!-- The 'left' inline style positions this absolutely within the root container -->
 	<button
+		bind:this={thumbButton}
 		type="button"
 		class={thumb()}
 		style="left: calc({percentage}% - 0.625rem)"
