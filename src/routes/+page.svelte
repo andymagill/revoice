@@ -97,6 +97,7 @@
 	let finalResults: TranscriptionResult[] = $state([]);
 	let currentInterim: TranscriptionResult | null = $state(null);
 	let recordingTime: number = $state(0);
+	let sessionDuration: number = $state(0); // Duration of loaded/paused session for playback
 	let sessionId: number | null = null;
 	let suppressTranscriptionErrors: boolean = false;
 
@@ -160,7 +161,9 @@
 					// Reset recording state when loading a session
 					recordingState = 'idle';
 					currentInterim = null;
-					recordingTime = 0;
+					// Set both recordingTime and sessionDuration for playback
+					recordingTime = selectedSession.duration || 0;
+					sessionDuration = selectedSession.duration || 0;
 				} catch (error) {
 					console.error('Failed to load session data:', error);
 				}
@@ -176,6 +179,7 @@
 			finalResults = [];
 			currentInterim = null;
 			recordingTime = 0;
+			sessionDuration = 0;
 			// Only reset if not currently recording
 			if (recordingState !== 'recording') {
 				recordingState = 'idle';
@@ -387,6 +391,7 @@
 			finalResults = [];
 			currentInterim = null;
 			recordingTime = 0;
+			sessionDuration = 0;
 			analyser = null;
 			// Don't clear sessionId or currentAudioBlob - keep for playback
 			console.log('Recording cleared');
@@ -433,6 +438,8 @@
 				// Update session duration
 				const duration = Date.now() - (startTime || 0);
 				await updateSessionDuration(sessionId, duration);
+				// Store duration for playback controls
+				sessionDuration = duration;
 
 				// Best-effort localStorage backup (base64) for recovery
 				try {
@@ -523,7 +530,7 @@
 									{audioChunks}
 									mimeType={getSupportedAudioFormat().mimeType}
 									disabled={recordingState === 'recording'}
-									durationMs={recordingTime}
+									durationMs={recordingState === 'recording' ? recordingTime : sessionDuration}
 									onAudioChange={(audio) => (playbackAudio = audio)}
 								/>
 							</CardContent>

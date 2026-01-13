@@ -110,10 +110,9 @@
 		{#if audioPlayback?.analyser}
 			<div class="w-full">
 				<EqVisualizer
-					analyser={audioPlayback.analyser}
+					recordingAnalyser={audioPlayback.analyser}
 					barCount={32}
 					height={80}
-					mode="playback"
 					disabled={false}
 					frozen={isPaused}
 				/>
