@@ -165,6 +165,21 @@
 					console.error('Failed to load session data:', error);
 				}
 			})();
+		} else if (selectedSession === null) {
+			// New Session clicked - clear all playback and recording state
+			sessionId = null;
+			currentAudioBlob = null;
+			if (playbackAudio) {
+				playbackAudio.pause();
+				playbackAudio = null;
+			}
+			finalResults = [];
+			currentInterim = null;
+			recordingTime = 0;
+			// Only reset if not currently recording
+			if (recordingState !== 'recording') {
+				recordingState = 'idle';
+			}
 		}
 	});
 
