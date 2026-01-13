@@ -1,6 +1,6 @@
 # ReVoice AI Agent Instructions
 
-**Project**: Browser-based voice transcription PoC  
+**Project**: Browser-based voice recording and transcription PoC  
 **Tech Stack**: SvelteKit 5, Vite, Tailwind, shadCN/UI, Dexie (IndexedDB), Web Speech API
 
 ## Architecture Overview

@@ -1,6 +1,6 @@
 # ReVoice PoC - Voice Transcription Application
 
-A proof-of-concept browser-based voice transcription application leveraging native browser APIs for speed, portability, and privacy-first audio handling.
+A proof-of-concept browser-based voice recording & transcription application leveraging native browser APIs for speed, portability, and privacy-first audio handling.
 
 ## Demo
 
@@ -8,7 +8,7 @@ A proof-of-concept browser-based voice transcription application leveraging nati
 
 ## Overview
 
-ReVoice is designed to demonstrate the capabilities of modern browser APIs for real-time voice transcription. It avoids heavy local AI models in favor of the **Web Speech API** for fast transcription and **MediaRecorder API** for transparent audio persistence, all within the browser's security context.
+ReVoice is designed to demonstrate the capabilities of modern browser APIs for real-time voice recording and transcription. It avoids heavy local AI models in favor of the **Web Speech API** for fast transcription and **MediaRecorder API** for transparent audio persistence, all within the browser's security context.
 
 ### Key Features
 

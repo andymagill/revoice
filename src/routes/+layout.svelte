@@ -90,7 +90,11 @@
 </script>
 
 <svelte:head>
-	<title>ReVoice - Voice Transcription</title>
+	<title>ReVoice - Recording & Transcription</title>
+	<meta
+		name="description"
+		content="ReVoice - A web app for recording and transcribing voice audio sessions."
+	/>
 </svelte:head>
 
 <CompatibilityShield>
