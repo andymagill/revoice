@@ -244,9 +244,8 @@
 			step={0.1}
 			disabled={disabled || !hasContent}
 			onValueChange={(value) => {
-				if (isSeeking) {
-					currentTime = value;
-				}
+				isSeeking = true;
+				currentTime = value;
 			}}
 			onValueCommit={handleSeekEnd}
 			class="flex-1 playback-slider"
@@ -262,8 +261,38 @@
 {/if}
 
 <style>
-	:global(.playback-slider) {
-		--slider-track-color: hsl(var(--muted));
-		--slider-range-color: hsl(var(--primary));
+	/* Playback timeline styling */
+	:global(.playback-slider .bg-secondary) {
+		/* Light gray for unplayed/empty portion */
+		background-color: rgb(229 231 235) !important; /* gray-200 */
+	}
+
+	:global(.playback-slider .bg-primary) {
+		/* Orange for played/elapsed portion */
+		background-color: rgb(249 115 22) !important; /* orange-500 */
+	}
+
+	:global(.playback-slider .border-primary) {
+		/* Orange border for thumb indicator */
+		border-color: rgb(249 115 22) !important; /* orange-500 */
+		border-width: 3px !important;
+	}
+
+	:global(.playback-slider button[role='slider']) {
+		/* Make thumb more visible */
+		box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2) !important;
+	}
+
+	/* Disabled state - keep light gray */
+	:global(.playback-slider:has([disabled]) .bg-secondary) {
+		background-color: rgb(229 231 235) !important; /* gray-200 */
+	}
+
+	:global(.playback-slider:has([disabled]) .bg-primary) {
+		background-color: rgb(209 213 219) !important; /* gray-300 */
+	}
+
+	:global(.playback-slider:has([disabled]) button[role='slider']) {
+		border-color: rgb(209 213 219) !important; /* gray-300 */
 	}
 </style>
