@@ -13,7 +13,7 @@ ReVoice is designed to demonstrate the capabilities of modern browser APIs for r
 ### Key Features
 
 - **Native Browser APIs**: Uses webkitSpeechRecognition for fast, low-latency transcription
-- **Local-Only Data**: All audio and transcripts remain in the user's browser using IndexedDB
+- **Local Storage**: Recorded audio and transcripts are persisted in the browser using IndexedDB. **Note:** The Web Speech API sends audio to cloud services (Google/Apple) for transcription.
 - **Modular Architecture**: Pluggable transcription engines allow easy integration of 3rd-party services
 - **Cross-Browser Support**: Tested on Chrome/Chromium and Safari (iOS & macOS)
 - **Real-Time Visualization**: Canvas-based 32-bar frequency analyzer
@@ -145,7 +145,7 @@ db.version(1).stores({
 - **audioData**: Binary audio blob storage (indexed by sessionId)
 - **transcripts**: Individual transcript segments with timing info
 
-All data is stored locally in the browser's IndexedDB—no cloud uploads.
+Recorded audio and transcripts are stored locally in the browser's IndexedDB. However, the transcription process uses the Web Speech API, which sends audio to cloud services (Google servers for Chrome/Edge, Apple servers for Safari).
 
 ### Audio Capture & Processing
 
@@ -323,7 +323,7 @@ const ext = getAudioFileExtension('audio/webm'); // '.webm'
 1. **Web Speech API**: No speaker identification (continues after voice stops)
 2. **MIME Formats**: Limited to WebM and MP4 across browsers
 3. **Language Support**: Depends on OS/browser speech engine
-4. **Privacy**: Audio is NOT sent to cloud (only browser speech service)
+4. **Cloud Transcription**: Audio is sent to cloud services via the Web Speech API (Google/Apple). Stored transcripts remain local only.
 
 ## Deployment
 
