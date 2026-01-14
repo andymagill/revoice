@@ -113,14 +113,16 @@
 	let timerInterval: ReturnType<typeof setInterval> | null = null;
 
 	// Get currentSession context from layout
-	const sessionContext = getContext<{ current: Session | null; set(value: Session | null): void }>(
-		'currentSession'
-	);
+	const sessionContext = getContext<{
+		current: Session | null;
+		set(value: Session | null): void;
+		clearRequested: boolean;
+	}>('currentSession');
 
 	// Load session data when currentSession changes from sidebar selection
 	/**
 	 * CRITICAL: This effect responds to context changes from the layout sidebar.
-	 * It handles TWO distinct use cases:
+	 * It handles THREE distinct use cases:
 	 *
 	 * 1. USER CLICKS SESSION IN SIDEBAR (selectedSession?.id is set):
 	 *    - Load blob from IndexedDB
@@ -128,27 +130,29 @@
 	 *    - Set local sessionId to loaded session ID
 	 *    - Reset recordingState to 'idle' (not recording the loaded session)
 	 *
-	 * 2. USER CLICKS "NEW SESSION" BUTTON (selectedSession === null):
-	 *    - ONLY clear state if NOT actively recording AND no local session exists
-	 *    - This prevents accidentally clearing transcripts during pause
+	 * 2. USER CLICKS "NEW SESSION" BUTTON (clearRequested === true):
+	 *    - ALWAYS clear all state (recording, playback, transcripts)
+	 *    - Stop current playback audio
+	 *    - Reset recording state to 'idle'
+	 *    - Clear sessionId to start fresh
 	 *
-	 * REGRESSION RISK: If you remove the guards (!isRecording && sessionId === null),
-	 * this effect will clear finalResults whenever currentSession becomes null,
-	 * which happens after pausing a new recording (before it's saved to DB and
-	 * shown in sidebar). This causes the "transcripts disappear on pause" bug.
+	 * 3. NORMAL NAVIGATION (selectedSession === null && !clearRequested):
+	 *    - DON'T clear state (prevents wiping on pause)
+	 *    - Preserves transcripts during active recording sessions
 	 *
-	 * WHY THE GUARDS ARE CRITICAL:
-	 * - New sessions don't set currentSession in the layout (they're local-only)
-	 * - After pause, we save to DB but currentSession stays null
-	 * - Without guards, the effect would wipe finalResults after each pause
-	 * - With guards, we only clear if user explicitly clicked New Session button
+	 * REGRESSION RISK: If you check only selectedSession === null, this effect will
+	 * clear finalResults whenever currentSession becomes null, which happens after
+	 * pausing a new recording. The clearRequested flag distinguishes explicit user
+	 * intent ("New Session" button) from normal state changes (pause/navigation).
 	 */
 	$effect(() => {
 		const selectedSession = sessionContext?.current;
+		const clearFlag = sessionContext?.clearRequested ?? false;
 		console.log('[+page.svelte] Session selection effect triggered:', {
 			selectedSessionId: selectedSession?.id ?? null,
 			currentSessionId: sessionId,
 			isRecording,
+			clearRequested: clearFlag,
 		});
 		if (selectedSession?.id) {
 			(async () => {
@@ -186,19 +190,34 @@
 					console.error('Failed to load session data:', error);
 				}
 			})();
-		} else if (selectedSession === null && !isRecording && sessionId === null) {
-			// New Session clicked - only clear state if conditions are met
-			// Guards prevent clearing during active recording or when local session exists
-			currentAudioBlob = null;
+		} else if (clearFlag) {
+			// New Session explicitly clicked - clear everything
+			console.log('[+page.svelte] Clearing all state due to explicit New Session request');
+
+			// Stop the recording engine if active before resetting state
+			if (engine && recordingState !== 'idle') {
+				engine.stop();
+			}
+
+			// Stop any currently playing audio
 			if (playbackAudio) {
 				playbackAudio.pause();
 				playbackAudio = null;
 			}
+
+			// Clear all recording and transcription state
+			currentAudioBlob = null;
 			finalResults = [];
 			currentInterim = null;
 			recordingTime = 0;
 			sessionDuration = 0;
+			sessionId = null;
 			recordingState = 'idle';
+
+			// Reset the clear flag
+			if (sessionContext) {
+				sessionContext.clearRequested = false;
+			}
 		}
 	});
 

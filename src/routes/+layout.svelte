@@ -19,6 +19,7 @@
 	let sidebarOpen: boolean = $state(false);
 	let playingAudio: HTMLAudioElement | null = $state(null);
 	let currentPlayingSessionId: number | null = $state(null);
+	let clearRequested: boolean = $state(false);
 
 	let { children } = $props();
 
@@ -29,6 +30,12 @@
 		},
 		set(value: Session | null) {
 			currentSession = value;
+		},
+		get clearRequested() {
+			return clearRequested;
+		},
+		set clearRequested(value: boolean) {
+			clearRequested = value;
 		},
 	});
 
@@ -77,6 +84,8 @@
 		}
 		// Clear playback state
 		currentPlayingSessionId = null;
+		// Signal explicit clear request before resetting session
+		clearRequested = true;
 		// Reset current session context
 		currentSession = null;
 	}
