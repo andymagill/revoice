@@ -139,10 +139,18 @@
 					{#each sessions as session (session.id)}
 						<Card
 							class="p-3 cursor-pointer hover:bg-accent hover:text-accent-foreground transition bg-accent/10"
-							onclick={() => (currentSession = session)}
+							onclick={() => {
+								currentSession = session;
+								sidebarOpen = false;
+							}}
 							role="button"
 							tabindex="0"
-							onkeydown={(e: KeyboardEvent) => e.key === 'Enter' && (currentSession = session)}
+							onkeydown={(e: KeyboardEvent) => {
+								if (e.key === 'Enter') {
+									currentSession = session;
+									sidebarOpen = false;
+								}
+							}}
 						>
 							<p class="font-medium text-sm text-foreground">{session.title}</p>
 							<div class="flex justify-between items-center mt-2 text-xs text-muted-foreground">
