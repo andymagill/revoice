@@ -55,6 +55,13 @@ export abstract class TranscriptionEngine implements ITranscriptionEngine {
 	protected errorCallbacks: Set<(error: Error) => void> = new Set();
 
 	/**
+	 * Set of callbacks subscribed to state changes
+	 * @protected
+	 */
+	protected stateChangeCallbacks: Set<(state: 'idle' | 'listening' | 'processing') => void> =
+		new Set();
+
+	/**
 	 * Current engine configuration (language, continuous mode, etc.)
 	 * @protected
 	 */
@@ -95,7 +102,10 @@ export abstract class TranscriptionEngine implements ITranscriptionEngine {
 	 * @param state - New state value
 	 */
 	protected setState(state: 'idle' | 'listening' | 'processing'): void {
-		this.state = state;
+		if (this.state !== state) {
+			this.state = state;
+			this.emitStateChange(state);
+		}
 	}
 
 	/**
@@ -145,6 +155,28 @@ export abstract class TranscriptionEngine implements ITranscriptionEngine {
 	}
 
 	/**
+	 * Subscribe to engine state changes
+	 *
+	 * Callback will be called whenever the engine transitions between states
+	 * (idle ↔ listening ↔ processing).
+	 *
+	 * @param callback - Function to call with new state
+	 * @returns Unsubscribe function that removes the listener
+	 *
+	 * @example
+	 * engine.onStateChange(state => {
+	 *   console.log('Engine state:', state);
+	 * });
+	 */
+	onStateChange(callback: (state: 'idle' | 'listening' | 'processing') => void): () => void {
+		this.stateChangeCallbacks.add(callback);
+		// Return unsubscribe function
+		return () => {
+			this.stateChangeCallbacks.delete(callback);
+		};
+	}
+
+	/**
 	 * Protected helper to emit a transcription result to all subscribers
 	 * Called by subclasses when transcription completes
 	 *
@@ -167,6 +199,19 @@ export abstract class TranscriptionEngine implements ITranscriptionEngine {
 	protected emitError(error: Error): void {
 		for (const callback of this.errorCallbacks) {
 			callback(error);
+		}
+	}
+
+	/**
+	 * Protected helper to emit a state change to all subscribers
+	 * Called internally by setState() when state changes
+	 *
+	 * @protected
+	 * @param state - The new state
+	 */
+	protected emitStateChange(state: 'idle' | 'listening' | 'processing'): void {
+		for (const callback of this.stateChangeCallbacks) {
+			callback(state);
 		}
 	}
 }

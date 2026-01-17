@@ -21,6 +21,7 @@
 	import RecordingControls from '$lib/components/RecordingControls.svelte';
 	import AudioPlaybackProvider from '$lib/components/AudioPlaybackProvider.svelte';
 	import TranscriptionProvider from '$lib/components/TranscriptionProvider.svelte';
+	import TranscriptionStatusIndicator from '$lib/components/TranscriptionStatusIndicator.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import {
 		Card,
@@ -627,7 +628,10 @@
 				<!-- Transcription Display -->
 				<Card>
 					<CardHeader>
-						<CardTitle class="text-lg">Transcript</CardTitle>
+						<div class="flex flex-row justify-between gap-2">
+							<CardTitle class="text-lg">Transcript</CardTitle>
+							<TranscriptionStatusIndicator />
+						</div>
 					</CardHeader>
 					<CardContent>
 						<!--

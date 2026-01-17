@@ -134,6 +134,22 @@ export interface ITranscriptionEngine {
 	onError(callback: (error: Error) => void): () => void;
 
 	/**
+	 * Subscribe to engine state changes
+	 *
+	 * Calls callback whenever the engine transitions between states
+	 * (idle ↔ listening ↔ processing).
+	 *
+	 * @param callback - Called with the new state
+	 * @returns Unsubscribe function to remove listener
+	 *
+	 * @example
+	 * const unsub = engine.onStateChange((state) => {
+	 *   console.log('Engine is now:', state);
+	 * });
+	 */
+	onStateChange(callback: (state: 'idle' | 'listening' | 'processing') => void): () => void;
+
+	/**
 	 * Get metadata about the engine
 	 *
 	 * Returns information like name, version, type, and supported languages.
