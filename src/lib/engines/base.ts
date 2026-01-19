@@ -37,10 +37,10 @@ import type {
 
 export abstract class TranscriptionEngine implements ITranscriptionEngine {
 	/**
-	 * Current engine state: 'idle' | 'listening' | 'processing'
+	 * Current engine state: 'idle' | 'connecting' | 'listening'
 	 * @protected
 	 */
-	protected state: 'idle' | 'listening' | 'processing' = 'idle';
+	protected state: 'idle' | 'connecting' | 'listening' = 'idle';
 
 	/**
 	 * Set of callbacks subscribed to transcription results
@@ -58,7 +58,7 @@ export abstract class TranscriptionEngine implements ITranscriptionEngine {
 	 * Set of callbacks subscribed to state changes
 	 * @protected
 	 */
-	protected stateChangeCallbacks: Set<(state: 'idle' | 'listening' | 'processing') => void> =
+	protected stateChangeCallbacks: Set<(state: 'idle' | 'connecting' | 'listening') => void> =
 		new Set();
 
 	/**
@@ -88,9 +88,9 @@ export abstract class TranscriptionEngine implements ITranscriptionEngine {
 	/**
 	 * Get the current engine state
 	 *
-	 * @returns Current state: 'idle', 'listening', or 'processing'
+	 * @returns Current state: 'idle', 'connecting', or 'listening'
 	 */
-	getState(): 'idle' | 'listening' | 'processing' {
+	getState(): 'idle' | 'connecting' | 'listening' {
 		return this.state;
 	}
 
@@ -101,8 +101,9 @@ export abstract class TranscriptionEngine implements ITranscriptionEngine {
 	 * @protected
 	 * @param state - New state value
 	 */
-	protected setState(state: 'idle' | 'listening' | 'processing'): void {
+	protected setState(state: 'idle' | 'connecting' | 'listening'): void {
 		if (this.state !== state) {
+			console.log(`[TranscriptionEngine] State transition: ${this.state} → ${state}`);
 			this.state = state;
 			this.emitStateChange(state);
 		}
@@ -125,10 +126,18 @@ export abstract class TranscriptionEngine implements ITranscriptionEngine {
 	 * unsub();
 	 */
 	onResult(callback: (result: TranscriptionResult) => void): () => void {
+		console.log(
+			'[TranscriptionEngine] onResult subscription added, total subscribers:',
+			this.resultCallbacks.size + 1
+		);
 		this.resultCallbacks.add(callback);
 		// Return unsubscribe function
 		return () => {
 			this.resultCallbacks.delete(callback);
+			console.log(
+				'[TranscriptionEngine] onResult unsubscribed, remaining subscribers:',
+				this.resultCallbacks.size
+			);
 		};
 	}
 
@@ -147,10 +156,18 @@ export abstract class TranscriptionEngine implements ITranscriptionEngine {
 	 * });
 	 */
 	onError(callback: (error: Error) => void): () => void {
+		console.log(
+			'[TranscriptionEngine] onError subscription added, total subscribers:',
+			this.errorCallbacks.size + 1
+		);
 		this.errorCallbacks.add(callback);
 		// Return unsubscribe function
 		return () => {
 			this.errorCallbacks.delete(callback);
+			console.log(
+				'[TranscriptionEngine] onError unsubscribed, remaining subscribers:',
+				this.errorCallbacks.size
+			);
 		};
 	}
 
@@ -158,7 +175,7 @@ export abstract class TranscriptionEngine implements ITranscriptionEngine {
 	 * Subscribe to engine state changes
 	 *
 	 * Callback will be called whenever the engine transitions between states
-	 * (idle ↔ listening ↔ processing).
+	 * (idle ↔ connecting ↔ listening).
 	 *
 	 * @param callback - Function to call with new state
 	 * @returns Unsubscribe function that removes the listener
@@ -168,11 +185,19 @@ export abstract class TranscriptionEngine implements ITranscriptionEngine {
 	 *   console.log('Engine state:', state);
 	 * });
 	 */
-	onStateChange(callback: (state: 'idle' | 'listening' | 'processing') => void): () => void {
+	onStateChange(callback: (state: 'idle' | 'connecting' | 'listening') => void): () => void {
+		console.log(
+			'[TranscriptionEngine] onStateChange subscription added, total subscribers:',
+			this.stateChangeCallbacks.size + 1
+		);
 		this.stateChangeCallbacks.add(callback);
 		// Return unsubscribe function
 		return () => {
 			this.stateChangeCallbacks.delete(callback);
+			console.log(
+				'[TranscriptionEngine] onStateChange unsubscribed, remaining subscribers:',
+				this.stateChangeCallbacks.size
+			);
 		};
 	}
 
@@ -209,7 +234,7 @@ export abstract class TranscriptionEngine implements ITranscriptionEngine {
 	 * @protected
 	 * @param state - The new state
 	 */
-	protected emitStateChange(state: 'idle' | 'listening' | 'processing'): void {
+	protected emitStateChange(state: 'idle' | 'connecting' | 'listening'): void {
 		for (const callback of this.stateChangeCallbacks) {
 			callback(state);
 		}

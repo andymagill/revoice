@@ -98,11 +98,11 @@ export interface ITranscriptionEngine {
 	/**
 	 * Get the current state of the engine
 	 *
-	 * @returns 'idle' - Not running
-	 * @returns 'listening' - Waiting for audio input
-	 * @returns 'processing' - Processing audio (final results pending)
+	 * @returns 'idle' - Not running, not recording
+	 * @returns 'connecting' - Recording/transcription being sent, awaiting first result
+	 * @returns 'listening' - Recording/transcription being sent and received (results flowing)
 	 */
-	getState(): 'idle' | 'listening' | 'processing';
+	getState(): 'idle' | 'connecting' | 'listening';
 
 	/**
 	 * Subscribe to transcription results
@@ -137,7 +137,7 @@ export interface ITranscriptionEngine {
 	 * Subscribe to engine state changes
 	 *
 	 * Calls callback whenever the engine transitions between states
-	 * (idle ↔ listening ↔ processing).
+	 * (idle ↔ connecting ↔ listening).
 	 *
 	 * @param callback - Called with the new state
 	 * @returns Unsubscribe function to remove listener
@@ -147,7 +147,7 @@ export interface ITranscriptionEngine {
 	 *   console.log('Engine is now:', state);
 	 * });
 	 */
-	onStateChange(callback: (state: 'idle' | 'listening' | 'processing') => void): () => void;
+	onStateChange(callback: (state: 'idle' | 'connecting' | 'listening') => void): () => void;
 
 	/**
 	 * Get metadata about the engine

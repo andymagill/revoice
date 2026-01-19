@@ -70,6 +70,21 @@ export class NativeEngine extends TranscriptionEngine {
 	private lastResultIndex: number = 0;
 
 	/**
+	 * Flag to track if we're explicitly stopping the engine.
+	 * Used to distinguish between explicit stop() calls and Web Speech API
+	 * naturally ending recognition (e.g., due to silence on Android).
+	 * @private
+	 */
+	private isStopping: boolean = false;
+
+	/**
+	 * Flag to track if we're in the middle of reconnecting.
+	 * When true, onstart won't transition to listening; we wait for onresult instead.
+	 * @private
+	 */
+	private isReconnecting: boolean = false;
+
+	/**
 	 * Constructor: Initialize the Web Speech API
 	 *
 	 * Throws an error if the Web Speech API is not available in the browser.
@@ -79,7 +94,9 @@ export class NativeEngine extends TranscriptionEngine {
 	 */
 	constructor() {
 		super();
+		console.log('[NativeEngine] Initializing Web Speech API engine');
 		this.initializeRecognition();
+		console.log('[NativeEngine] Initialization complete');
 	}
 
 	/**
@@ -99,9 +116,12 @@ export class NativeEngine extends TranscriptionEngine {
 		const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition;
 
 		if (!SpeechRecognition) {
-			throw new Error('Web Speech API not supported in this browser');
+			const error = 'Web Speech API not supported in this browser';
+			console.error('[NativeEngine]', error);
+			throw new Error(error);
 		}
 
+		console.log('[NativeEngine] Web Speech API available');
 		this.recognition = new SpeechRecognition();
 
 		// Configure for continuous recognition with interim results
@@ -109,13 +129,39 @@ export class NativeEngine extends TranscriptionEngine {
 		this.recognition.interimResults = true;
 		this.recognition.lang = 'en-US';
 
+		console.log(
+			'[NativeEngine] Recognition configured: continuous=true, interimResults=true, lang=en-US'
+		);
+
 		// Event handler: Recognition started listening
 		this.recognition.onstart = () => {
-			this.setState('listening');
+			console.log(
+				'[NativeEngine] onstart: Recognition started listening (isReconnecting=' +
+					this.isReconnecting +
+					')'
+			);
+			// Only transition to 'listening' if this is a fresh start
+			// If reconnecting, stay in 'connecting' until we get actual results
+			if (!this.isReconnecting) {
+				this.setState('listening');
+			}
 		};
 
 		// Event handler: Transcription results arrived
 		this.recognition.onresult = (event: any) => {
+			console.log(
+				`[NativeEngine] onresult: ${event.results.length} total results, index=${event.resultIndex}`
+			);
+
+			// If we were in connecting state (waiting for first result), transition to listening
+			if (this.isReconnecting) {
+				console.log(
+					'[NativeEngine] First result after reconnect, transitioning from connecting to listening'
+				);
+				this.isReconnecting = false;
+				this.setState('listening');
+			}
+
 			/**
 			 * STREAMING TRANSCRIPTION PATTERN
 			 *
@@ -151,12 +197,17 @@ export class NativeEngine extends TranscriptionEngine {
 				 * - Skip if result is final but already processed (prevents duplicates)
 				 */
 				if (i >= this.lastResultIndex || !isFinal) {
+					console.log(
+						`[NativeEngine] Emitting result[${i}]: "${transcript}" (isFinal=${isFinal}, confidence=${confidence.toFixed(2)})`
+					);
 					this.emitResult({
 						text: transcript,
 						isFinal: isFinal,
 						confidence,
 						resultIndex: i,
 					});
+				} else {
+					console.log(`[NativeEngine] Skipping result[${i}]: already processed and finalized`);
 				}
 
 				/**
@@ -172,6 +223,7 @@ export class NativeEngine extends TranscriptionEngine {
 
 		// Event handler: Recognition encountered an error
 		this.recognition.onerror = (event: any) => {
+			console.error('[NativeEngine] onerror event:', event.error);
 			// Common error types: "no-speech", "network", "timeout", "permission-denied"
 			const error = new Error(`Speech recognition error: ${event.error}`);
 			this.emitError(error);
@@ -179,7 +231,31 @@ export class NativeEngine extends TranscriptionEngine {
 
 		// Event handler: Recognition ended
 		this.recognition.onend = () => {
-			this.setState('idle');
+			console.log(`[NativeEngine] onend: Recognition ended (isStopping=${this.isStopping})`);
+			// Only transition to idle if we explicitly called stop()
+			// Otherwise, if recognition ended naturally (e.g., due to silence on Android),
+			// we stay active since the user is still recording
+			if (this.isStopping) {
+				this.isStopping = false;
+				console.log('[NativeEngine] Explicit stop detected, transitioning to idle');
+				this.setState('idle');
+			} else if (this.state === 'listening') {
+				// Recognition ended naturally, but we're still actively recording.
+				// Set state to connecting and attempt to restart recognition
+				console.log('[NativeEngine] Natural end detected during active listening, reconnecting...');
+				this.isReconnecting = true;
+				this.setState('connecting');
+				try {
+					this.recognition.start();
+					console.log('[NativeEngine] Reconnection started');
+				} catch (error) {
+					console.error('[NativeEngine] Failed to restart recognition:', error);
+					// If restart fails, emit an error
+					this.emitError(
+						new Error(`Failed to restart recognition after natural end: ${(error as any).message}`)
+					);
+				}
+			}
 		};
 	}
 
@@ -204,31 +280,43 @@ export class NativeEngine extends TranscriptionEngine {
 	 * await engine.start(stream, { language: 'en-US' });
 	 */
 	async start(stream: MediaStream, config?: EngineConfig): Promise<void> {
+		console.log('[NativeEngine] start() called, current state:', this.state);
+
 		if (this.state === 'listening') {
-			throw new Error('Engine is already listening');
+			const error = 'Engine is already listening';
+			console.error('[NativeEngine]', error);
+			throw new Error(error);
 		}
 
 		this.stream = stream;
+		console.log('[NativeEngine] Audio stream acquired');
 
 		// Apply configuration overrides
 		if (config?.language) {
 			this.recognition.lang = config.language;
+			console.log('[NativeEngine] Language configured:', config.language);
 		}
 		if (config?.continuous !== undefined) {
 			this.recognition.continuous = config.continuous;
+			console.log('[NativeEngine] Continuous mode:', config.continuous);
 		}
 		if (config?.interimResults !== undefined) {
 			this.recognition.interimResults = config.interimResults;
+			console.log('[NativeEngine] Interim results:', config.interimResults);
 		}
 
 		// Start recognition
 		try {
+			console.log('[NativeEngine] Calling recognition.start()');
 			this.recognition.start();
 			this.setState('listening');
+			console.log('[NativeEngine] Recognition started successfully');
 		} catch (error) {
+			console.warn('[NativeEngine] recognition.start() threw error:', error);
 			// Handle case where recognition is already running
 			// (user clicked start multiple times quickly)
 			if ((error as any).message?.includes('already started')) {
+				console.log('[NativeEngine] Recognition already started, aborting and restarting');
 				this.recognition.abort();
 				this.recognition.start();
 			} else {
@@ -246,23 +334,37 @@ export class NativeEngine extends TranscriptionEngine {
 	 * @returns Promise that resolves when stopped (immediately)
 	 */
 	async stop(): Promise<void> {
+		console.log('[NativeEngine] stop() called, current state:', this.state);
+
 		if (this.state === 'idle') {
+			console.log('[NativeEngine] Already idle, nothing to stop');
 			return;
 		}
 
 		try {
+			// Set flag to indicate we're explicitly stopping
+			// This prevents onend handler from restarting recognition
+			this.isStopping = true;
+			console.log('[NativeEngine] isStopping flag set to true');
+
 			// Tell recognition to stop accepting audio
+			console.log('[NativeEngine] Calling recognition.stop()');
 			this.recognition.stop();
-			this.setState('idle');
 		} catch (error) {
-			console.warn('Error stopping recognition:', error);
+			console.warn('[NativeEngine] Error stopping recognition:', error);
 		}
 
 		// Release the audio stream and stop all tracks
 		if (this.stream) {
-			this.stream.getTracks().forEach((track) => track.stop());
+			console.log('[NativeEngine] Stopping audio tracks');
+			this.stream.getTracks().forEach((track) => {
+				console.log(`[NativeEngine] Stopping track: ${track.kind} (${track.readyState})`);
+				track.stop();
+			});
 			this.stream = null;
 		}
+
+		console.log('[NativeEngine] stop() complete');
 	}
 
 	/**
