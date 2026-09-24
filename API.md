@@ -9,7 +9,8 @@ Complete API documentation for all public interfaces, types, and functions in Re
 3. [Database API](#database-api)
 4. [Audio Utilities](#audio-utilities)
 5. [Compatibility API](#compatibility-api)
-6. [Component Props](#component-props)
+6. [State Classes](#state-classes)
+7. [Component Props](#component-props)
 
 ---
 
@@ -44,12 +45,12 @@ interface ITranscriptionEngine {
 	/**
 	 * Get current engine state
 	 *
-	 * @returns One of: 'idle' | 'listening' | 'processing'
-	 * - 'idle': Not recording, ready to start
-	 * - 'listening': Actively recording audio input
-	 * - 'processing': Completed recording, processing audio
+	 * @returns EngineState: 'idle' | 'connecting' | 'listening'
+	 * - 'idle': Not running
+	 * - 'connecting': Started (or auto-reconnecting), waiting for the recognizer to confirm audio
+	 * - 'listening': Recognition is live and results can arrive
 	 */
-	getState(): 'idle' | 'listening' | 'processing';
+	getState(): EngineState;
 
 	/**
 	 * Register callback for transcription results
@@ -419,30 +420,15 @@ if (session) {
 
 ##### storeAudioData()
 
-Saves audio blob for a session.
+Stores the audio for a session, **replacing** any audio already stored for it.
 
 ```typescript
-function storeAudioData(sessionId: number, audioBlob: Blob): Promise<number>;
+function storeAudioData(sessionId: number, blob: Blob): Promise<number>;
 ```
 
-**Parameters**:
+Each save is the complete recording so far (all MediaRecorder chunks concatenated), so this is an upsert (delete + add in one transaction). `audioData` therefore holds at most one row per session.
 
-- `sessionId` - Which session this audio belongs to
-- `audioBlob` - Binary audio data (from MediaRecorder)
-
-**Returns**: AudioData record ID
-
-**Example**:
-
-```typescript
-const mediaRecorder = new MediaRecorder(stream, {
-	mimeType: 'audio/webm',
-});
-
-mediaRecorder.ondataavailable = (event) => {
-	await storeAudioData(sessionId, event.data);
-};
-```
+**Returns**: ID of the stored AudioData row
 
 ##### getSessionAudio()
 
@@ -496,40 +482,10 @@ engine.onResult(async (result) => {
 
 ##### getSessionTranscripts()
 
-Retrieves all transcript lines for a session.
+Returns every transcript segment for a session, sorted by `time`.
 
 ```typescript
 function getSessionTranscripts(sessionId: number): Promise<Transcript[]>;
-```
-
-**Returns**: Array of Transcript records, ordered by time
-
-**Example**:
-
-```typescript
-const transcripts = await getSessionTranscripts(42);
-const fullText = transcripts
-	.filter((t) => t.isFinal)
-	.map((t) => t.text)
-	.join(' ');
-```
-
-##### getSessionFullTranscript()
-
-Gets complete concatenated transcript for a session.
-
-```typescript
-function getSessionFullTranscript(sessionId: number): Promise<string>;
-```
-
-**Returns**: Full text string with all final transcripts joined
-
-**Example**:
-
-```typescript
-const fullText = await getSessionFullTranscript(42);
-console.log(fullText);
-// Outputs: "Hello world this is my transcript..."
 ```
 
 ##### deleteSession()
@@ -546,29 +502,6 @@ function deleteSession(sessionId: number): Promise<void>;
 
 ```typescript
 await deleteSession(42); // Session completely removed
-```
-
-##### getDBStats()
-
-Returns current database usage statistics.
-
-```typescript
-function getDBStats(): Promise<{
-	sessionCount: number;
-	totalAudioSize: number;
-	totalTranscriptChars: number;
-	totalSize: number;
-}>;
-```
-
-**Returns**: Object with storage metrics
-
-**Example**:
-
-```typescript
-const stats = await getDBStats();
-console.log(`${stats.sessionCount} sessions`);
-console.log(`${Math.round(stats.totalAudioSize / 1024)}KB of audio`);
 ```
 
 ##### clearAllData()
@@ -598,145 +531,27 @@ if (confirm('Delete all recordings?')) {
 
 **File**: `src/lib/audio.ts`
 
-Detects which audio MIME type the browser supports for recording.
+Picks the best audio format the browser can record.
 
 ```typescript
-function getSupportedAudioFormat(): string;
+function getSupportedAudioFormat(): AudioFormat; // { mimeType: string; codecs?: string[] }
 ```
 
-**Returns**: MIME type string (e.g., "audio/webm;codecs=opus" or "audio/mp4")
-
-**Browser Defaults**:
-
-- **Chrome/Edge**: `audio/webm;codecs=opus` (WebM with Opus codec)
-- **Safari**: `audio/mp4` (MP4/AAC format)
-- **Firefox**: `audio/webm` (WebM with Vorbis)
-
-**Example**:
+**Preference**: `audio/webm;codecs=opus` → `audio/webm` → `audio/mp4` (Safari) → `audio/webm` fallback.
 
 ```typescript
-const mimeType = getSupportedAudioFormat();
-const mediaRecorder = new MediaRecorder(stream, { mimeType });
+const { mimeType } = getSupportedAudioFormat();
+const recorder = new MediaRecorder(stream, { mimeType });
 ```
 
-### cloneMediaStream()
+### getSharedAudioContext()
 
-Creates separate audio stream copies for concurrent consumers.
+**File**: `src/lib/audio.ts`
 
-```typescript
-function cloneMediaStream(
-	originalStream: MediaStream,
-	audioContext: AudioContext
-): { mediaRecorderTrack: MediaStream; analyserTrack: MediaStream };
-```
-
-**Why**:
-
-- One copy goes to MediaRecorder (persistence)
-- One copy goes to Web Audio (visualization)
-- Microphone can only have one consumer without cloning
-
-**Parameters**:
-
-- `originalStream` - MediaStream from getUserMedia()
-- `audioContext` - AudioContext for processing
-
-**Returns**: Object with two separate streams
-
-**Example**:
+Returns the app-wide `AudioContext`, creating it on first use and resuming it if suspended. Browsers limit how many contexts may exist, so all code shares this one. Call it first from a user gesture (Safari).
 
 ```typescript
-const originalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-
-const { mediaRecorderTrack, analyserTrack } = cloneMediaStream(originalStream, audioContext);
-
-// Use mediaRecorderTrack with MediaRecorder
-const recorder = new MediaRecorder(mediaRecorderTrack);
-
-// Use analyserTrack with analyser for visualization
-const source = audioContext.createMediaStreamAudioSource(analyserTrack);
-const analyser = audioContext.createAnalyser();
-source.connect(analyser);
-```
-
-### createMediaRecorder()
-
-Convenience function to create MediaRecorder with auto-detected MIME type.
-
-```typescript
-function createMediaRecorder(
-	stream: MediaStream,
-	onDataAvailable?: (blob: Blob) => void
-): MediaRecorder;
-```
-
-**Parameters**:
-
-- `stream` - MediaStream to record
-- `onDataAvailable` - Optional callback for data chunks
-
-**Returns**: Configured MediaRecorder instance
-
-**Example**:
-
-```typescript
-const recorder = createMediaRecorder(stream, (blob) => {
-	console.log(`Recorded chunk: ${blob.size} bytes`);
-});
-
-recorder.start();
-// ... recording ...
-recorder.stop();
-```
-
-### blobToBase64()
-
-Converts audio Blob to Base64 string for transmission or storage.
-
-```typescript
-function blobToBase64(blob: Blob): Promise<string>;
-```
-
-**Use Cases**:
-
-- Sending audio to API endpoints
-- Storing in text-based databases
-- Embedding in data URIs
-
-**Returns**: Promise resolving to Base64 string
-
-**Example**:
-
-```typescript
-const audioBlob = await getSessionAudio(sessionId);
-const base64 = await blobToBase64(audioBlob);
-// Can now send to API: fetch('/api/process', { body: base64 })
-```
-
-### getAudioFileExtension()
-
-Maps MIME type to file extension.
-
-```typescript
-function getAudioFileExtension(mimeType: string): string;
-```
-
-**Mappings**:
-
-- `audio/webm;codecs=opus` → `webm`
-- `audio/mp4` → `m4a`
-- `audio/mpeg` → `mp3`
-- Fallback → `wav`
-
-**Returns**: File extension without dot
-
-**Example**:
-
-```typescript
-const mimeType = getSupportedAudioFormat();
-const ext = getAudioFileExtension(mimeType);
-const filename = `recording.${ext}`; // e.g., "recording.webm"
+function getSharedAudioContext(): AudioContext;
 ```
 
 ---
@@ -816,28 +631,64 @@ const notes = getBrowserSpecificNotes();
 notes.forEach((note) => console.log(`⚠️  ${note}`));
 ```
 
-### isIOS()
+---
 
-Checks if device is iPhone/iPad.
+## State Classes
+
+Both live in `.svelte.ts` files and expose Svelte 5 reactive state.
+
+### Recorder
+
+**File**: `src/lib/recorder.svelte.ts`
+
+Recording state machine plus the data for the session on screen. See [RECORDING_FLOW.md](RECORDING_FLOW.md) for the expected behavior.
 
 ```typescript
-function isIOS(): boolean;
-```
+class Recorder {
+	constructor(engine: ITranscriptionEngine | null, hooks?: RecorderHooks);
 
-**Example**:
+	// Reactive state
+	state: 'idle' | 'recording' | 'paused';
+	elapsedMs: number; // excludes paused time
+	sessionId: number | null;
+	finals: TranscriptionResult[];
+	interim: TranscriptionResult | null;
+	audioBlob: Blob | null;
+	analyser: AnalyserNode | null;
+	error: string | null;
 
-```typescript
-if (isIOS()) {
-	console.log('Running on iOS');
+	start(): Promise<void>; // idle → recording (user gesture)
+	pause(): Promise<void>; // recording → paused, saves audio
+	resume(): Promise<void>; // paused → recording (same MediaRecorder)
+	finalize(): Promise<void>; // any → idle: stop, save, release mic
+	open(session: Session): Promise<void>; // view a saved session (idle only)
+	reset(): void; // clear the on-screen session (idle only)
+	dispose(): void; // finalize + unsubscribe from the engine
+}
+
+interface RecorderHooks {
+	sessionCreated?(session: Session): void;
+	audioSaved?(): void;
 }
 ```
 
-### isMacOS()
+### SessionStore
 
-Checks if device is Mac.
+**File**: `src/lib/sessions.svelte.ts`. Created by the layout; obtain it with `getSessionStore()` from `$lib/context`.
 
 ```typescript
-function isMacOS(): boolean;
+class SessionStore {
+	sessions: Session[]; // newest first
+	selected: Session | null;
+
+	attach(handlers: { open(s: Session): Promise<void>; reset(): Promise<void> }): () => void;
+	refresh(): Promise<void>;
+	adopt(session: Session): void; // mark selected without loading (recorder made it)
+	select(session: Session): Promise<void>; // stop recording, then load
+	startNew(): Promise<void>; // stop recording, then clear
+	remove(id: number): Promise<void>; // resets first if it is the open session
+	clearAll(): Promise<void>;
+}
 ```
 
 ---
@@ -864,53 +715,48 @@ interface Props {
 
 ### EqVisualizer
 
-Canvas-based frequency spectrum visualizer.
+Canvas frequency-bar visualizer. Uses the playback analyser from an enclosing `AudioPlaybackProvider` when present (green bars), otherwise `recordingAnalyser` (red bars).
 
 **Props**:
 
 ```typescript
 interface Props {
-	audioContext?: AudioContext; // AudioContext (unused, for compatibility)
-	analyser?: AnalyserNode; // REQUIRED: AnalyserNode with frequency data
-	barCount?: number; // Number of bars (default: 32)
-	height?: number; // Canvas height in pixels (default: 200)
-	barColor?: string; // Bar color (default: "#3b82f6")
+	recordingAnalyser?: AnalyserNode; // microphone analyser
+	barCount?: number; // default 32; FFT size is set to barCount * 2 (power of two)
+	height?: number; // canvas height in px (default 200)
+	barColor?: string; // overrides the automatic colour
+	disabledBarColor?: string; // default "#d1d5db"
+	pausedBarColor?: string; // default "#f59e0b"
+	disabled?: boolean; // flat baseline bars, no animation
+	frozen?: boolean; // draw the last live frame once, no animation
 }
 ```
 
 **Example**:
 
 ```svelte
-<EqVisualizer {analyser} barCount={32} height={150} barColor="#10b981" />
+<EqVisualizer recordingAnalyser={recorder.analyser ?? undefined} barCount={32} height={150} />
 ```
 
 ### TranscriptionProvider
 
-Context provider injecting engine into component tree.
+Puts the engine into context for descendants.
 
 **Props**:
 
 ```typescript
 interface Props {
-	engine: ITranscriptionEngine; // REQUIRED: Engine instance
-	children?: any; // Child components with access to engine
+	engine: ITranscriptionEngine | null; // null = speech recognition unavailable
+	children?: Snippet;
 }
 ```
 
-**Example**:
+**Child access** (typed helper from `$lib/context`):
 
 ```svelte
-<TranscriptionProvider engine={nativeEngine}>
-	<RecordingControls />
-</TranscriptionProvider>
-```
-
-**Child Access**:
-
-```svelte
-<script>
-	import { getContext } from 'svelte';
-	const engine = getContext('transcriptionEngine');
+<script lang="ts">
+	import { getTranscriptionEngine } from '$lib/context';
+	const engine = getTranscriptionEngine(); // ITranscriptionEngine | null
 </script>
 ```
 
@@ -965,6 +811,11 @@ try {
 ---
 
 ## Version History
+
+- **0.1.0** - Stabilization release
+  - Fixed resume, mic-stream sharing, duplicate transcripts and stale stored audio
+  - Added `Recorder` and `SessionStore`; removed the unused playback dock and helper functions
+  - Database schema v3 (one audio row per session)
 
 - **1.0.0** - Initial release
   - Native engine implementation

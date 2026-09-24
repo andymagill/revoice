@@ -35,25 +35,28 @@ ReVoice is designed to demonstrate the capabilities of modern browser APIs for r
 ```
 src/
 ├── lib/
-│   ├── components/          # Svelte UI components
-│   │   ├── CompatibilityShield.svelte
-│   │   ├── EqVisualizer.svelte
-│   │   └── TranscriptionProvider.svelte
-│   ├── engines/             # Transcription engine implementations
-│   │   ├── base.ts          # Abstract base class
-│   │   └── native.ts        # Web Speech API implementation
-│   ├── audio.ts             # Audio utilities (MIME detection, cloning)
-│   ├── compat.ts            # Browser compatibility checks
+│   ├── components/          # Svelte UI components (+ ui/ shadcn primitives)
+│   ├── engines/             # Transcription engines
+│   │   ├── base.ts          # Abstract base class (subscribers, state machine)
+│   │   ├── native.ts        # Web Speech API implementation
+│   │   └── speech-recognition.ts  # Web Speech typings + constructor lookup
+│   ├── recorder.svelte.ts   # Recorder: recording state machine + on-screen session data
+│   ├── sessions.svelte.ts   # SessionStore: history, selection, new/delete/clear commands
 │   ├── db.ts                # Dexie.js database layer
-│   └── types.ts             # TypeScript interfaces & types
+│   ├── audio.ts             # MIME detection, shared AudioContext
+│   ├── compat.ts            # Browser compatibility checks
+│   ├── context.ts           # Typed Svelte context helpers
+│   ├── types.ts             # TypeScript interfaces & types
+│   └── utils.ts             # cn(), formatDuration()
 ├── routes/
-│   ├── +layout.svelte       # Root layout with sidebar & dock
+│   ├── +layout.svelte       # App shell: sidebar, header
 │   ├── +layout.js           # SPA configuration
-│   └── +page.svelte         # Main recording dashboard
+│   └── +page.svelte         # Recording dashboard
 └── app.css                  # Global styles
 
 build/                       # Static build output
-specification.md            # Original product specification
+ARCHITECTURE.md              # How the pieces fit together
+specification.md             # Original product specification
 ```
 
 ## Getting Started
@@ -100,7 +103,7 @@ The core innovation of ReVoice is its **pluggable engine architecture**. All tra
 interface ITranscriptionEngine {
 	start(stream: MediaStream, config?: EngineConfig): Promise<void>;
 	stop(): Promise<void>;
-	getState(): 'idle' | 'listening' | 'processing';
+	getState(): 'idle' | 'connecting' | 'listening';
 	onResult(callback: (result: TranscriptionResult) => void): () => void;
 	onError(callback: (error: Error) => void): () => void;
 	getMetadata(): EngineMetadata;
@@ -159,7 +162,7 @@ ReVoice handles audio capture through a dual-track system:
    - Creates AnalyserNode for real-time frequency data
    - Drives the 32-bar EQ visualizer
 
-**Stream Cloning**: Uses `stream.clone()` to feed both tracks from a single microphone input.
+**Single stream**: One `getUserMedia` stream feeds both the MediaRecorder and the analyser; the same stream is reused across pause/resume and released when the session ends.
 
 ### Browser Compatibility
 
@@ -182,46 +185,17 @@ These are handled transparently in the `NativeEngine` and `audio.ts` utilities.
 
 ## Component Overview
 
-### CompatibilityShield
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full map. The main pieces:
 
-- **Purpose**: API support detection and user warning
-- **Props**: `children` (slot content)
-- **Behavior**: Shows modal if required APIs are missing
-- **File**: `src/lib/components/CompatibilityShield.svelte`
-
-### EqVisualizer
-
-- **Purpose**: Canvas-based 32-bar frequency analyzer
-- **Props**: `audioContext`, `analyser`, `barCount`, `height`, `barColor`
-- **Behavior**: Real-time frequency visualization (updates at 60 FPS)
-- **File**: `src/lib/components/EqVisualizer.svelte`
-
-### TranscriptionProvider
-
-- **Purpose**: Inject transcription engine via Svelte context
-- **Props**: `engine` (ITranscriptionEngine), `children`
-- **Usage**: Wrap page components to access engine
-- **File**: `src/lib/components/TranscriptionProvider.svelte`
-
-### +layout.svelte (Root Layout)
-
-- **Purpose**: Main application shell
-- **Sections**:
-  - Sidebar with session history
-  - Header with session title
-  - Main content area
-  - Persistent playback dock
-- **Features**: Collapsible sidebar, audio playback, session deletion
-
-### +page.svelte (Dashboard)
-
-- **Purpose**: Recording interface and transcript display
-- **Sections**:
-  - Recording controls (Record/Pause/Stop)
-  - Timer display
-  - EQ Visualizer
-  - Real-time transcript bubbles
-- **Behavior**: Starts recording and engine on Record button click
+- **+layout.svelte**: app shell (sidebar with session history, header, page outlet). Creates the `SessionStore` and shares it via context.
+- **+page.svelte**: the dashboard. Creates the engine and the `Recorder` and composes the widgets below.
+- **RecordingControls**: mic button, timer and status text. Props: `recordingState`, `recordingTime`, `disabled`, `onMicClick`.
+- **AudioPlaybackControls**: play/pause and seek bar for one blob. Props: `blob`, `disabled`, `durationMs`, `onAudioChange`.
+- **AudioPlaybackProvider**: routes the playback `<audio>` through an AnalyserNode and shares it via context.
+- **EqVisualizer**: canvas frequency bars. Props: `recordingAnalyser`, `barCount`, `height`, `barColor`, `disabled`, `frozen`.
+- **TranscriptView**: chat-style final and interim transcript bubbles.
+- **TranscriptionProvider** / **TranscriptionStatusIndicator**: provide the engine via context; show idle / connecting / listening.
+- **CompatibilityShield**: warns when a required browser API is missing; children always render.
 
 ## Database API
 
@@ -247,7 +221,7 @@ await deleteSession(id);
 ### Audio Storage
 
 ```typescript
-// Store audio blob
+// Store the complete audio for a session (replaces any previous audio: one row per session)
 const audioId = await storeAudioData(sessionId, blob);
 
 // Retrieve audio for a session
@@ -260,21 +234,14 @@ const blob = await getSessionAudio(sessionId);
 // Store transcript segment
 await storeTranscript(sessionId, text, timeMs, isFinal);
 
-// Get all transcripts for a session
+// Get all transcripts for a session, in spoken order
 const transcripts = await getSessionTranscripts(sessionId);
-
-// Get full transcript as string
-const fullText = await getSessionFullTranscript(sessionId);
 ```
 
 ### Utilities
 
 ```typescript
-// Get database statistics
-const stats = await getDBStats();
-// { sessionCount: 5, audioCount: 5, transcriptCount: 142 }
-
-// Clear all data
+// Clear all data (single transaction)
 await clearAllData();
 ```
 
@@ -291,17 +258,11 @@ const format = getSupportedAudioFormat();
 MediaRecorder.isTypeSupported('audio/webm;codecs=opus');
 ```
 
-### Stream Management
+### Shared AudioContext
 
 ```typescript
-// Clone a stream for multiple consumers
-const cloned = cloneMediaStream(originalStream);
-
-// Create MediaRecorder with auto-detected MIME
-const recorder = createMediaRecorder(stream);
-
-// Get file extension from MIME type
-const ext = getAudioFileExtension('audio/webm'); // '.webm'
+// One AudioContext for the whole app (browsers cap how many can exist); resumed on each call
+const context = getSharedAudioContext();
 ```
 
 ## Browser Support & Testing

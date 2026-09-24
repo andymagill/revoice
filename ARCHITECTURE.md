@@ -1,471 +1,124 @@
-# ReVoice Architecture Guide
+# ReVoice Architecture
 
-## Overview
+ReVoice is a static SvelteKit 5 single-page app (no server) that records microphone audio, transcribes it live with the browser's Web Speech API, and stores everything locally in IndexedDB.
 
-ReVoice is designed around a modular, extensible architecture that separates concerns into distinct layers:
+Companion docs: [RECORDING_FLOW.md](RECORDING_FLOW.md) (expected recording behavior), [API.md](API.md) (public function/type reference), [README.md](README.md) (setup and usage).
 
-1. **Engine Layer** - Pluggable transcription backends
-2. **Storage Layer** - Local IndexedDB persistence
-3. **Audio Layer** - Cross-browser audio handling
-4. **Component Layer** - Reactive Svelte UI
-5. **Utility Layer** - Browser compatibility & helpers
+## Entry points
 
-This layered architecture allows each component to be tested, debugged, and extended independently.
+| Entry                                                  | Role                                                                                                          |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| [src/routes/+layout.js](src/routes/+layout.js)         | `ssr = false`, `prerender = true`: builds a client-only SPA (`adapter-static`, fallback `index.html`)         |
+| [src/routes/+layout.svelte](src/routes/+layout.svelte) | App shell: compatibility check, history sidebar, header. Creates the `SessionStore` and shares it via context |
+| [src/routes/+page.svelte](src/routes/+page.svelte)     | Dashboard. Creates the engine and the `Recorder`, wires them to the store, lays out the widgets               |
 
-## Architecture Layers
-
-### 1. Engine Layer (`src/lib/engines/`)
-
-**Purpose**: Abstract transcription service behind a consistent interface
-
-**Structure**:
+## File map
 
 ```
-engines/
-├── base.ts          # Abstract TranscriptionEngine class
-└── native.ts        # Web Speech API implementation
+src/
+├── routes/
+│   ├── +layout.js / +layout.svelte / +page.svelte     (entry points above)
+└── lib/
+    ├── recorder.svelte.ts     Recorder: recording state machine + data for the session on screen
+    ├── sessions.svelte.ts     SessionStore: session list, selection, new/delete/clear commands
+    ├── db.ts                  Dexie schema (v3) and queries
+    ├── audio.ts               MIME-type detection, shared AudioContext
+    ├── compat.ts              Browser/API capability checks
+    ├── context.ts             Typed Svelte-context helpers (engine, playback graph, store)
+    ├── types.ts               Shared types (EngineState, Session, Transcript, ...)
+    ├── utils.ts               cn(), formatDuration()
+    ├── engines/
+    │   ├── base.ts                 TranscriptionEngine: subscribers + state machine
+    │   ├── native.ts               NativeEngine: Web Speech API implementation
+    │   └── speech-recognition.ts   Minimal Web Speech typings + constructor lookup
+    └── components/
+        ├── RecordingControls       Mic button, timer, status text (presentational)
+        ├── AudioPlaybackControls   Play/pause + seek for one blob; owns the <audio> element
+        ├── AudioPlaybackProvider   Routes the <audio> through an AnalyserNode; shares it via context
+        ├── EqVisualizer            Canvas frequency bars (live / frozen / disabled)
+        ├── TranscriptView          Chat-style final + interim transcript bubbles
+        ├── TranscriptionProvider   Puts the engine into context
+        ├── TranscriptionStatusIndicator   idle / connecting / listening badge
+        ├── CompatibilityShield     Missing-API warning modal
+        ├── Footer
+        └── ui/                     shadcn-svelte primitives (button, card, slider)
 ```
 
-**Key Design**: All engines implement `ITranscriptionEngine`
-
-```typescript
-interface ITranscriptionEngine {
-	start(stream, config?): Promise<void>;
-	stop(): Promise<void>;
-	getState(): 'idle' | 'listening' | 'processing';
-	onResult(callback): () => void;
-	onError(callback): () => void;
-	start(stream, config?): Promise<void>;
-	stop(): Promise<void>;
-	getState(): 'idle' | 'listening' | 'processing';
-	onResult(callback): () => void;
-	onError(callback): () => void;
-	getMetadata(): EngineMetadata;
-}
-```
-
-## Critical Patterns & Pitfalls (Read Before Contributing)
-
-### 1. Svelte 5 Responsivity vs. Resource Management
-
-**The Issue:** Svelte 5's `$effect` primitive is highly reactive. If you read a state variable inside an effect that also _updates_ that variable (or triggers a cleanup that reads it), you will create an infinite loop.
-
-**The Fix:** Use `untrack()` for cleanup logic or "read-only" dependency access.
-
-```typescript
-// ❌ BAD: Infinite Loop
-$effect(() => {
-	// Reading 'audio' registers it as a dependency
-	if (audio) {
-		audio.pause();
-	}
-	// ... create new audio ...
-	audio = newAudio; // Triggers effect again!
-});
-
-// ✅ GOOD: Untracked Cleanup
-$effect(() => {
-	// Reading 'audio' via untrack hides dependency from Svelte
-	const prevAudio = untrack(() => audio);
-	if (prevAudio) {
-		prevAudio.pause();
-	}
-
-	// ... create new audio ...
-	audio = newAudio; // Safe to update
-});
-```
-
-### 2. MediaRecorder Blob Duration
-
-**The Issue:** Blobs created via `MediaRecorder` often lack metadata headers for duration, especially in Chrome (WebM). This causes `audio.duration` to return `Infinity`, breaking UI sliders and timeline calculations.
-
-**The Fix:** Never trust `audio.duration` alone for recorded blobs. always pass an explicit duration tracked by the application.
-
-```typescript
-// Fallback logic in components
-const duration = Number.isFinite(audio.duration) ? audio.duration : knownDurationMs / 1000;
-```
-
-**Extension Points**:
-
-To add a new engine (e.g., Deepgram):
-
-```typescript
-// src/lib/engines/deepgram.ts
-import { TranscriptionEngine } from './base';
-
-export class DeepgramEngine extends TranscriptionEngine {
-	private apiKey: string;
-
-	constructor(apiKey: string) {
-		super();
-		this.apiKey = apiKey;
-	}
-
-	async start(stream, config) {
-		// Initialize Deepgram WebSocket connection
-		// Setup event handlers to call emitResult()
-	}
-
-	async stop() {
-		// Close WebSocket connection
-	}
-
-	getMetadata() {
-		return { name: 'Deepgram', version: '1.0.0', type: 'api' };
-	}
-}
-```
-
-Then use it in `+page.svelte`:
-
-```typescript
-import { DeepgramEngine } from '$lib/engines/deepgram';
-let engine = new DeepgramEngine(apiKey);
-```
-
-**UI Components Don't Change** - They only care about `ITranscriptionEngine`, not implementation details.
-
-### 2. Storage Layer (`src/lib/db.ts`)
-
-**Purpose**: Manage all local data persistence using IndexedDB
-
-**Database Schema**:
-
-```javascript
-// ReVoiceDB with 3 object stores
-db.version(1).stores({
-	sessions: '++id, timestamp, duration, title, mimeType, engineType',
-	audioData: '++id, sessionId',
-	transcripts: '++id, sessionId, text, time',
-});
-```
-
-**Data Model**:
+## Layers and responsibilities
 
 ```
-Session (metadata)
-├── id: primary key (auto)
-├── timestamp: when recording started
-├── duration: total recording length (ms)
-├── title: user-provided name
-├── mimeType: audio format (e.g., "audio/webm;codecs=opus")
-├── engineType: which engine was used
-└── transcriptLength: cached character count
-
-AudioData (binary)
-├── id: primary key (auto)
-├── sessionId: foreign key → Session
-└── blob: binary audio file
-
-Transcript (text)
-├── id: primary key (auto)
-├── sessionId: foreign key → Session
-├── text: transcribed text
-├── time: timestamp from session start
-└── isFinal: whether interim or final
+ UI components ──► Recorder ──► TranscriptionEngine (NativeEngine)
+       │              │
+       │              ├──► MediaRecorder + AnalyserNode (one shared mic stream)
+       │              └──► db.ts (IndexedDB)
+       └──► SessionStore ──► db.ts
 ```
 
-**API Functions**:
+- **Engine layer** (`engines/`): a pluggable interface (`ITranscriptionEngine` in `types.ts`). `TranscriptionEngine` supplies subscribers and the `idle → connecting → listening` state machine; `NativeEngine` adapts `webkitSpeechRecognition`. To add a backend (Deepgram, ...), extend `TranscriptionEngine`; nothing above it changes.
+- **Recorder** (`recorder.svelte.ts`): the only place that touches the microphone, MediaRecorder and the engine during a recording. Exposes reactive state (`state`, `elapsedMs`, `finals`, `interim`, `audioBlob`, `analyser`, `error`).
+- **SessionStore** (`sessions.svelte.ts`): "what is selected" plus the commands that change it. It never touches the recorder directly; the page registers handlers with `store.attach()` and the store awaits them (see below).
+- **Persistence** (`db.ts`): local only. Nothing is uploaded by ReVoice (the browser's speech service may process audio remotely; the footer says so).
 
-- Session management: `createSession()`, `getAllSessions()`, `getSession()`, `deleteSession()`
-- Audio persistence: `storeAudioData()`, `getSessionAudio()`
-- Transcript management: `storeTranscript()`, `getSessionTranscripts()`, `getSessionFullTranscript()`
-- Utilities: `getDBStats()`, `clearAllData()`
-
-**Separation of Concerns**:
-
-- `Session` contains metadata only (fast lookup)
-- `AudioData` stored separately (blob data is large)
-- `Transcript` separated for granular updates
-- Indexes optimize common queries by `sessionId`
-
-### 3. Audio Layer (`src/lib/audio.ts`)
-
-**Purpose**: Handle browser-specific audio quirks and formats
-
-**Browser Differences**:
-
-| Aspect         | Chrome                 | Safari             | Firefox    |
-| -------------- | ---------------------- | ------------------ | ---------- |
-| MIME Type      | audio/webm;codecs=opus | audio/mp4          | audio/webm |
-| MediaRecorder  | ✅                     | ✅                 | ✅         |
-| Web Audio API  | ✅                     | ✅ (webkit prefix) | ✅         |
-| Stream Cloning | ✅                     | ✅                 | ✅         |
-
-**Dual-Track Audio Approach**:
+## Recording state machine
 
 ```
-Microphone Stream
-    │
-    ├──→ MediaRecorder (persistence)
-    │        └──→ IndexedDB Blob
-    │
-    └──→ Web Audio API (visualization)
-         └──→ AnalyserNode
-              └──→ 32-bar frequency data
-              └──→ EqVisualizer component
+        start()                 pause()
+ idle ───────────► recording ───────────► paused
+   ▲                   ▲                     │
+   │                   └────── resume() ─────┘
+   └────────── finalize()  (from recording or paused)
 ```
 
-**Key Functions**:
+- One `MediaRecorder` lives from `start` to `finalize`; pause/resume reuse it, so all chunks form one valid file.
+- Every **pause** saves the complete audio so far (`storeAudioData` is an upsert: one row per session) and the duration.
+- `finalize()` = stop engine → stop recorder (wait for its last chunk) → save if new audio → release mic → idle.
+- Commands never overlap: `start/pause/resume` are ignored while another command runs; `finalize` waits for it.
+- Elapsed time sums recording segments and excludes paused time.
+- A saved session is **view-only**. Its audio is one finished file; a second MediaRecorder would produce a second container that cannot be joined. The mic is disabled while one is open; the user starts a New Session.
 
-- `getSupportedAudioFormat()` - Detect browser's preferred audio codec
-- `cloneMediaStream()` - Feed same audio to recorder and analyzer
-- `createMediaRecorder()` - Configure recorder with browser-specific MIME
-- `getAudioFileExtension()` - Map MIME to filename extension
+## Key data flows
 
-### 4. Component Layer (`src/lib/components/`, `src/routes/`)
+**Record → pause → resume**
+`mic click` → `Recorder.start()` → getUserMedia → analyser + MediaRecorder → `createSession` → `sessionCreated` hook → page calls `store.adopt(session)` + `store.refresh()` → engine starts. Results arrive via `engine.onResult` → `finals`/`interim` (final segments also `storeTranscript`).
+`pause()` → engine.stop (awaited, so flushed finals land) → recorder.pause → requestData → save audio + duration → `paused`. `resume()` → recorder.resume → engine.start.
 
-**Purpose**: Reactive UI components using Svelte
+**Open a saved session**
+sidebar click → `store.select(session)` → handler: `recorder.finalize()` then `recorder.open(session)` (loads audio + transcripts; a newer call discards an older in-flight load).
 
-**Component Tree**:
+**New session / delete / clear all**
+`store.startNew()` → handler: `finalize()` then `recorder.reset()`. `store.remove(id)` and `store.clearAll()` call `startNew()` first when needed, so an active recording is saved _before_ its rows are deleted (no orphan rows).
 
-```
-+layout.svelte (root)
-├── CompatibilityShield (API check modal)
-├── Sidebar
-│   └── Session List
-├── Header
-├── MainContent
-│   └── +page.svelte
-│       ├── Recording Controls
-│       ├── EqVisualizer
-│       └── Transcript Display
-└── PlaybackDock
-    └── Audio Player
+## Context keys (see `context.ts`)
 
-TranscriptionProvider
-└── Provides engine via context
-```
+| Key                   | Provider                                      | Consumers                      |
+| --------------------- | --------------------------------------------- | ------------------------------ |
+| `transcriptionEngine` | `TranscriptionProvider` (engine or `null`)    | `TranscriptionStatusIndicator` |
+| `audioPlayback`       | `AudioPlaybackProvider` (`audio`, `analyser`) | `EqVisualizer`                 |
+| `sessionStore`        | `+layout.svelte`                              | `+page.svelte`                 |
 
-**Data Flow**:
+## Storage (IndexedDB "ReVoiceDB", Dexie schema v3)
 
-1. User clicks Record button in `+page.svelte`
-2. Request microphone access → `getUserMedia()`
-3. Create transcription engine
-4. Set up MediaRecorder and Web Audio
-5. Start engine + recording
-6. Engine emits results → update transcript array
-7. Results stored in IndexedDB
-8. Visualizer reads AnalyserNode data continuously
+| Table         | Key                     | Notes                                            |
+| ------------- | ----------------------- | ------------------------------------------------ |
+| `sessions`    | `++id`                  | title, timestamp, duration, mimeType, engineType |
+| `audioData`   | `++id`, sessionId       | at most one row per session (upsert)             |
+| `transcripts` | `++id`, sessionId, time | final segments only, read back sorted by `time`  |
 
-### 5. Utility Layer
+v3 dropped the unused v2 tables and, on upgrade, keeps only the newest `audioData` row per session (older releases appended one per pause and read the oldest).
 
-**Browser Compatibility (`src/lib/compat.ts`)**:
+## Gotchas (read before changing things)
 
-- API support detection: `checkApiSupport()`
-- Browser identification: `getBrowserName()`, `isIOS()`, `isMacOS()`
-- Browser-specific notes: `getBrowserSpecificNotes()`
+1. **`$effect` and cycles.** Reading state you also write inside an effect loops forever. Read callbacks/props you do not want as dependencies with `untrack()`, and prefer returning cleanup from the effect over reading state to undo it (see `AudioPlaybackControls`, `AudioPlaybackProvider`).
+2. **One `createMediaElementSource` per element.** A second call throws. `AudioPlaybackProvider` caches the node per element in a `WeakMap`; never delete that entry while the element lives.
+3. **Blob URLs live as long as their element.** `AudioPlaybackControls` revokes in effect cleanup, which runs before the next element is created.
+4. **MediaRecorder WebM blobs report `duration = Infinity`.** Pass `durationMs` and let the controls fall back to it.
+5. **The engine must not stop the mic stream.** Web Speech uses its own capture; the Recorder owns and releases the stream.
+6. **`SpeechRecognition.stop()` is async.** Wait for `engine.stop()` before starting again. Fatal errors (`not-allowed`, `network`, ...) end the session instead of auto-reconnecting.
+7. **Safari.** Start recognition and the AudioContext from a click handler; recording is `audio/mp4`.
+8. **Analyser size.** 64-point FFT (32 bins) to match the 32 visualizer bars; `EqVisualizer` also sets this on whichever analyser it is given.
+9. **Engine may be missing.** `NativeEngine` throws where Web Speech is unsupported; the page passes `null` and records audio only.
 
-**Type Definitions (`src/lib/types.ts`)**:
+## Extending: adding an engine
 
-- `ITranscriptionEngine` - Engine interface contract
-- `TranscriptionResult` - Individual transcription output
-- `Session`, `AudioData`, `Transcript` - Database records
-- `EngineConfig`, `EngineMetadata` - Configuration types
-
-## Data Flow Diagram
-
-```
-┌─────────────────┐
-│  User clicks    │
-│ "Record" button │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────────────────┐
-│ requestMicrophone()         │
-│ (getUserMedia)              │
-└────────┬────────────────────┘
-         │
-         ▼
-┌─────────────────────────────┐
-│ Create Engines & Recorders  │
-│ - NativeEngine              │
-│ - MediaRecorder             │
-│ - AnalyserNode              │
-└────────┬────────────────────┘
-         │
-         ▼
-    ┌────────────────────────────────────┐
-    │ Audio Stream Split (clone)         │
-    └────────┬──────────┬──────────┬─────┘
-             │          │          │
-      ▼      ▼          ▼          ▼
-   MediaRec  AudioCtx   Analysis   (unused)
-    │        │          │
-    │        ├──────────┤
-    │        │          │
-    ▼        ▼          ▼
-┌──────┐ ┌─────────┐ ┌──────────┐
-│ Blob │ │Analyser │ │Frequency │
-└──┬───┘ └────┬────┘ │  Data    │
-   │          │      └─────┬────┘
-   │          │            │
-   ▼          ▼            ▼
-┌──────────────────────────────────────┐
-│ Event Handlers (real-time)           │
-│ - emitResult() → update UI           │
-│ - draw frequency bars → visualizer   │
-│ - store in IndexedDB                 │
-└──────────────────────────────────────┘
-```
-
-## Extension Examples
-
-### Adding Language Support
-
-Current: Single language selector in UI
-
-```typescript
-// Create multi-language engine
-export class MultilingualNativeEngine extends NativeEngine {
-	async setLanguage(langCode: string) {
-		this.config.language = langCode;
-		if (this.state === 'listening') {
-			await this.stop();
-			await this.start(this.stream, this.config);
-		}
-	}
-}
-```
-
-### Adding Cloud Transcription
-
-Example: Deepgram integration
-
-```typescript
-export class DeepgramEngine extends TranscriptionEngine {
-	private ws: WebSocket;
-
-	async start(stream, config) {
-		// 1. Get WebSocket URL from Deepgram API
-		// 2. Connect WebSocket
-		// 3. Stream audio chunks to Deepgram
-		// 4. Parse incoming JSON transcriptions
-		// 5. Call emitResult() with results
-	}
-}
-```
-
-### Adding Recording Export
-
-Example: Download session as WAV/MP3
-
-```typescript
-import { getSessionAudio, getSessionFullTranscript } from '$lib/db';
-
-export async function exportSession(sessionId: number) {
-	const audio = await getSessionAudio(sessionId);
-	const transcript = await getSessionFullTranscript(sessionId);
-
-	// Create ZIP file with audio + transcript.txt
-	// Trigger browser download
-}
-```
-
-## Performance Considerations
-
-### Transcription Latency
-
-- **Target**: < 200ms (Chrome & Safari)
-- **Achieved**: ~150ms with Web Speech API
-- **Bottleneck**: OS speech engine recognition
-
-### Visualizer Responsiveness
-
-- **Target**: 60 FPS continuous
-- **Implementation**: `requestAnimationFrame()` loop
-- **Data**: AnalyserNode update rate independent of speech events
-
-### Storage Efficiency
-
-- **Audio**: WebM/Opus = ~20KB/min of speech
-- **Transcripts**: ~100 bytes per sentence
-- **Metadata**: ~500 bytes per session
-- **Typical Session** (5 min): < 200KB
-
-### Build Output
-
-- **Production Bundle**: ~150KB (gzipped)
-- **Load Time**: < 2s (cold start)
-- **Runtime Memory**: ~50MB baseline
-
-## Security & Privacy
-
-### Data Locality
-
-- ✅ All data stays in browser's IndexedDB
-- ✅ No server requests for recordings
-- ❌ Web Speech API may use cloud service (browser-controlled)
-
-### Audio Stream Safety
-
-- ✅ Stream created by browser security model
-- ✅ Microphone permission required per browser policy
-- ✅ No access to other tabs/apps audio
-
-### Blob Storage
-
-- ✅ IndexedDB respects same-origin policy
-- ✅ No cross-site access to stored audio
-- ✅ Clearing site data removes all recordings
-
-## Testing Strategy
-
-### Unit Tests (Planned)
-
-- Engine implementations
-- Database functions
-- Audio utilities
-
-### Integration Tests (Planned)
-
-- Full record → transcribe → store workflow
-- Cross-browser audio format handling
-- Session lifecycle management
-
-### Manual Testing (Current)
-
-1. Record audio in Chrome → verify transcription
-2. Record audio in Safari → verify MP4 format
-3. Playback stored sessions
-4. Delete sessions → verify cleanup
-
-## Future Extensibility
-
-### Roadmap Considerations
-
-**Phase 2 - Multi-Engine Support**
-
-- [ ] Engine selector UI
-- [ ] Deepgram API adapter
-- [ ] AssemblyAI API adapter
-- [ ] Fallback logic (service unavailable)
-
-**Phase 3 - Advanced Features**
-
-- [ ] Real-time speaker diarization
-- [ ] Custom vocabulary training
-- [ ] Real-time translation
-- [ ] Local ML models (WASM)
-
-**Phase 4 - Deployment**
-
-- [ ] Progressive Web App (PWA) support
-- [ ] Offline functionality
-- [ ] Cloud sync option
-- [ ] Mobile apps (React Native)
-
-## Conclusion
-
-ReVoice's modular architecture achieves:
-
-1. **Pluggability**: Swap engines without touching UI
-2. **Testability**: Test each layer independently
-3. **Maintainability**: Clear separation of concerns
-4. **Extensibility**: Add features with minimal changes
-5. **Privacy**: All processing in user's browser
-
-The `ITranscriptionEngine` interface is the keystone—it enables the entire system to remain agnostic about _how_ transcription happens, only _that_ it happens.
+1. Create `src/lib/engines/myengine.ts` extending `TranscriptionEngine`; implement `start`, `stop` (resolve once idle) and `getMetadata`; call `setState`, `emitResult`, `emitError`.
+2. Construct it in `+page.svelte` instead of (or based on a choice between) `NativeEngine`. `Recorder`, `TranscriptionProvider` and the status indicator depend only on `ITranscriptionEngine`.
