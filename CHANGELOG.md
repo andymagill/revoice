@@ -23,6 +23,7 @@ Stabilization release: the record → pause → resume → reopen flow now works
 - **Visualizer** now uses a 64-point FFT for the recording analyser (it previously showed only the lowest frequencies) and no longer risks running two draw loops.
 - Playback: listeners and blob URLs are cleaned up, state resets when the blob changes, and re-attaching a previously used audio element no longer throws.
 - Unhandled rejection when storing a transcript fails.
+- **Pre-commit hook and `pnpm` scripts failed on pnpm 11** (`ERR_PNPM_IGNORED_BUILDS`) because pnpm 11 ignores `pnpm.onlyBuiltDependencies` in `package.json`. Added `pnpm-workspace.yaml` with `allowBuilds` for esbuild.
 
 ### Changed
 

@@ -1,0 +1,4 @@
+# pnpm 11 no longer reads "pnpm.onlyBuiltDependencies" from package.json; this is its replacement.
+# esbuild needs its install script to fetch the platform binary used by Vite.
+allowBuilds:
+  esbuild: true
