@@ -6,6 +6,8 @@ All notable changes to ReVoice are documented here. The format follows [Keep a C
 
 ### Fixed
 
+- **One transcript bubble per word on Android.** Android Chrome reports every partial as a final result that repeats the text so far ("this", "this is", "this is a test"), and each was shown and stored as its own segment. On Android the engine now holds a final back, shows it as interim while longer versions arrive and commits it once (when it stops growing, the session ends or recording is paused). Other browsers are unchanged.
+
 - **Transcription stuck on "Connecting" on Android Chrome.** When speech recognition could not get audio (typically because the recorder held the microphone), the engine restarted it endlessly with no delay and never reported a problem. Restarts now back off, and after four rapid empty sessions the engine stops and shows an error while audio recording continues. A start watchdog also aborts a recognizer that never reports `onstart`.
 - `language-not-supported` and `bad-grammar` recognition errors now end the session instead of restarting it.
 - `stop()` during a pending restart resolves immediately instead of waiting for the stop timeout.

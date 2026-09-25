@@ -26,6 +26,11 @@
  * - A start watchdog aborts a recognizer that never reports `onstart`.
  * - Each recognition session numbers its results from 0 again, so the de-duplication
  *   index is reset whenever a session (re)starts.
+ * - Android Chrome flags every partial as final and repeats the text so far ("this",
+ *   "this is", "this is a test"), which would otherwise become one transcript segment
+ *   per word. Where that happens (`collapseCumulativeFinals`) a final is held back and
+ *   shown as interim while longer versions of it keep arriving, then committed once
+ *   when it stops growing, the session ends or `stop()` is called.
  * - Safari requires `start()` to run inside a user-gesture handler.
  * - Every lifecycle event is logged through `diag()` (see diagnostics.svelte.ts).
  *
@@ -64,6 +69,14 @@ const START_TIMEOUT_MS = 15000;
  */
 const MIN_HEALTHY_SESSION_MS = 3000;
 
+/**
+ * With `collapseCumulativeFinals`, how long a final may go without a longer version
+ * arriving before it is committed. Only matters for a pause inside a session: the
+ * session ending or `stop()` commits immediately, and words spoken after the pause are
+ * added as a new segment rather than repeating the committed one.
+ */
+const FINAL_SETTLE_MS = 1200;
+
 /** Consecutive rapid empty sessions tolerated before giving up. */
 const MAX_RAPID_EMPTY_SESSIONS = 4;
 
@@ -86,8 +99,24 @@ const FATAL_ERRORS = new Set([
 /** Errors that are routine during normal use and are not worth surfacing to the user. */
 const BENIGN_ERRORS = new Set(['no-speech', 'aborted']);
 
+export interface NativeEngineOptions {
+	/**
+	 * Merge "final" results that each repeat the previous one plus a few words into a single
+	 * segment. Defaults to on for Android, where Chrome reports every partial as final.
+	 */
+	collapseCumulativeFinals?: boolean;
+}
+
 export class NativeEngine extends TranscriptionEngine {
 	private recognition: SpeechRecognitionLike;
+	private collapseCumulativeFinals: boolean;
+
+	/** A final held back in case a longer version of it follows (see `collapseCumulativeFinals`). */
+	private pendingFinal: { text: string; confidence: number; resultIndex: number } | null = null;
+	private settleTimer: ReturnType<typeof setTimeout> | null = null;
+
+	/** Text already committed as final in the current recognition session. */
+	private committedText = '';
 
 	/** Index after the last final result of the current recognition session (dedupe guard). */
 	private lastResultIndex = 0;
@@ -121,12 +150,16 @@ export class NativeEngine extends TranscriptionEngine {
 	/**
 	 * @throws Error if the Web Speech API is not available in this browser.
 	 */
-	constructor() {
+	constructor(options: NativeEngineOptions = {}) {
 		super();
 		const Recognition = getSpeechRecognitionConstructor();
 		if (!Recognition) {
 			throw new Error('Web Speech API not supported in this browser');
 		}
+
+		this.collapseCumulativeFinals =
+			options.collapseCumulativeFinals ??
+			(typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent));
 
 		this.recognition = new Recognition();
 		this.recognition.continuous = true;
@@ -275,6 +308,9 @@ export class NativeEngine extends TranscriptionEngine {
 		this.sawAudio = false;
 		this.sawSound = false;
 		this.sawResult = false;
+		// A recognition session's results (and their repeated text) start over.
+		this.pendingFinal = null;
+		this.committedText = '';
 
 		diag('speech', 'recognition.start()', {
 			session: this.sessionNumber,
@@ -319,6 +355,7 @@ export class NativeEngine extends TranscriptionEngine {
 
 	/** Finish an explicit stop: clear bookkeeping, go idle, release the waiting caller. */
 	private completeStop(): void {
+		this.flushPendingFinal();
 		if (this.stopTimer) clearTimeout(this.stopTimer);
 		this.stopTimer = null;
 		this.clearRestartTimer();
@@ -370,20 +407,65 @@ export class NativeEngine extends TranscriptionEngine {
 		for (let i = event.resultIndex; i < event.results.length; i++) {
 			const result = event.results[i];
 			const { transcript, confidence } = result[0];
+			const isNew = i >= this.lastResultIndex;
 
 			diag('speech', 'onresult', {
 				session: this.sessionNumber,
 				index: i,
+				resultIndex: event.resultIndex,
+				total: event.results.length,
 				isFinal: result.isFinal,
 				chars: transcript.length,
 			});
-			if (i >= this.lastResultIndex || !result.isFinal) {
+			if (result.isFinal && isNew && this.collapseCumulativeFinals) {
+				this.collapseFinal(transcript, confidence, i);
+			} else if (isNew || !result.isFinal) {
 				this.emitResult({ text: transcript, isFinal: result.isFinal, confidence, resultIndex: i });
 			}
 			if (result.isFinal) {
 				this.lastResultIndex = i + 1;
 			}
 		}
+	}
+
+	/**
+	 * Handle a final result when the browser repeats the text so far in each one.
+	 *
+	 * The text is held back and shown as interim. If the next final extends it, it replaces
+	 * the held text; if it is something else, the held text is committed first. Words that
+	 * repeat text already committed in this session (after a pause) are stripped so they
+	 * are not shown twice.
+	 */
+	private collapseFinal(text: string, confidence: number, resultIndex: number): void {
+		let body = text.trim();
+		if (this.committedText && body.toLowerCase().startsWith(this.committedText.toLowerCase())) {
+			body = body.slice(this.committedText.length).trim();
+		}
+		if (!body) return;
+
+		const pending = this.pendingFinal;
+		if (pending && !body.toLowerCase().startsWith(pending.text.toLowerCase())) {
+			this.flushPendingFinal();
+		}
+
+		this.pendingFinal = { text: body, confidence, resultIndex };
+		this.emitResult({ text: body, isFinal: false, confidence, resultIndex });
+
+		if (this.settleTimer) clearTimeout(this.settleTimer);
+		this.settleTimer = setTimeout(() => this.flushPendingFinal(), FINAL_SETTLE_MS);
+	}
+
+	/** Commit the held-back final (if any) as a real final result. */
+	private flushPendingFinal(): void {
+		if (this.settleTimer) clearTimeout(this.settleTimer);
+		this.settleTimer = null;
+
+		const pending = this.pendingFinal;
+		if (!pending) return;
+		this.pendingFinal = null;
+		this.committedText = `${this.committedText} ${pending.text}`.trim();
+		diag('speech', 'final-committed', { session: this.sessionNumber, chars: pending.text.length });
+		this.emitResult({ ...pending, isFinal: true });
 	}
 
 	private handleError(event: SpeechRecognitionErrorEventLike): void {
@@ -420,6 +502,7 @@ export class NativeEngine extends TranscriptionEngine {
 			fatal: this.fatalErrorSeen,
 		});
 		this.clearStartWatchdog();
+		this.flushPendingFinal();
 
 		if (this.isStopping) {
 			this.completeStop();
