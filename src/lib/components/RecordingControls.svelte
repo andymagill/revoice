@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Mic } from 'lucide-svelte';
+	import { Mic } from '@lucide/svelte';
 	import { formatDuration } from '$lib/utils';
 	import type { RecordingState } from '$lib/recorder.svelte';
 

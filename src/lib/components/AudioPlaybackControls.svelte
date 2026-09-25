@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { Play, Pause } from 'lucide-svelte';
+	import { Play, Pause } from '@lucide/svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { Slider } from '$lib/components/ui/slider';
 	import { formatDuration } from '$lib/utils';

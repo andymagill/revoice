@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Circle, LoaderCircle, Mic } from 'lucide-svelte';
+	import { Circle, LoaderCircle, Mic } from '@lucide/svelte';
 	import { getTranscriptionEngine } from '$lib/context';
 	import type { EngineState } from '$lib/types';
 

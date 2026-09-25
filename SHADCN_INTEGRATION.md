@@ -8,7 +8,7 @@ This project now uses **shadCN/UI** for Svelte, a component library built on top
 
 - `shadcn-svelte`: Component library (v1.1.0)
 - `bits-ui`: Headless UI components (v2.15.4)
-- `lucide-svelte`: Icon library (v0.562.0)
+- `@lucide/svelte`: Icon library (v0.562.0)
 - `clsx`: Utility for className manipulation (v2.1.1)
 - `tailwind-merge`: Merge Tailwind CSS classes (v3.4.0)
 
@@ -155,6 +155,6 @@ All components use **Tailwind CSS v4** for styling. The color scheme uses slate-
 
 Consider adding:
 
-- Icon imports from `lucide-svelte` to replace emoji icons
+- Icon imports from `@lucide/svelte` to replace emoji icons
 - More specialized components as needed
 - Custom theming if required
