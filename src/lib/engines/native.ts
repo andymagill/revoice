@@ -1,384 +1,174 @@
 /**
- * Native Web Speech API Transcription Engine
+ * Native Web Speech API transcription engine — the default ReVoice engine.
  *
- * This is the default, built-in transcription engine for ReVoice.
- * It uses the Web Speech API (webkitSpeechRecognition) available in
- * Chrome, Edge, and Safari for fast, low-latency transcription.
+ * Wraps `webkitSpeechRecognition` (Chrome, Edge, Safari 14.1+) for low-latency,
+ * continuous transcription with interim results. Speech recognition is performed by
+ * the browser's speech service (which may be remote), not by ReVoice.
  *
- * Features:
- * - Continuous mode: recognizes until explicitly stopped
- * - Interim results: returns partial text while user is still speaking
- * - Multilingual support: supports ~100+ languages via OS speech engine
- * - No external dependencies: works offline with system speech recognition
+ * Things worth knowing before changing this file:
  *
- * Browser Support:
- * - ✅ Chrome/Chromium 25+
- * - ✅ Safari 14.1+
- * - ✅ Edge 79+
- * - ⚠️  Firefox (behind flag)
- *
- * Safari-Specific Notes:
- * - MUST be called from within a click handler (user gesture requirement)
- * - AudioContext also requires user gesture
- * - Uses audio/mp4 format instead of WebM
+ * - The Web Speech API opens its own microphone capture, so the `MediaStream` passed to
+ *   `start()` is accepted for interface compatibility but never touched. In particular
+ *   `stop()` must NOT stop the stream's tracks: the recorder owns that stream and keeps
+ *   using it across pause/resume.
+ * - `SpeechRecognition.stop()` is asynchronous; the session only ends when `onend`
+ *   fires. `stop()` therefore returns a promise that resolves on `onend`, and `start()`
+ *   waits for any pending stop. Otherwise a fast pause then resume would call `start()`
+ *   on a recognizer that is still shutting down, and the late `onend` would mark a live
+ *   session as idle.
+ * - Browsers end recognition on their own (silence timeouts, Android). If that happens
+ *   while the engine is meant to be running we transparently restart it.
+ * - Each recognition session numbers its results from 0 again, so the de-duplication
+ *   index is reset whenever a session (re)starts.
+ * - Safari requires `start()` to run inside a user-gesture handler.
  *
  * @example
  * const engine = new NativeEngine();
- * const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
- *
- * engine.onResult(result => {
- *   console.log(result.text, result.isFinal);
- * });
- *
- * engine.onError(error => {
- *   console.error('Speech recognition error:', error);
- * });
- *
+ * engine.onResult((r) => console.log(r.text, r.isFinal));
+ * engine.onError((e) => console.error(e.message));
  * await engine.start(stream, { language: 'en-US' });
  * // ...
  * await engine.stop();
  */
 
 import { TranscriptionEngine } from './base';
-import type { EngineConfig, EngineMetadata, TranscriptionResult } from '../types';
+import {
+	getSpeechRecognitionConstructor,
+	type SpeechRecognitionErrorEventLike,
+	type SpeechRecognitionEventLike,
+	type SpeechRecognitionLike,
+} from './speech-recognition';
+import type { EngineConfig, EngineMetadata } from '../types';
 
-declare global {
-	interface Window {
-		webkitSpeechRecognition: any;
-		SpeechRecognition: any;
-	}
-}
+/** How long `stop()` waits for `onend` before forcing the engine to idle. */
+const STOP_TIMEOUT_MS = 1500;
+
+/**
+ * Errors that will not fix themselves on retry. Auto-reconnecting after these would spin
+ * forever (and, for permission errors, re-prompt), so they end the session instead.
+ */
+const FATAL_ERRORS = new Set(['not-allowed', 'service-not-allowed', 'audio-capture', 'network']);
+
+/** Errors that are routine during normal use and are not worth surfacing to the user. */
+const BENIGN_ERRORS = new Set(['no-speech', 'aborted']);
 
 export class NativeEngine extends TranscriptionEngine {
-	/**
-	 * Reference to the Web Speech API recognition object
-	 * @private
-	 */
-	private recognition: any = null;
+	private recognition: SpeechRecognitionLike;
+
+	/** Index after the last final result of the current recognition session (dedupe guard). */
+	private lastResultIndex = 0;
+
+	/** True from `stop()` until the recognizer's `onend`; tells our stop apart from a natural end. */
+	private isStopping = false;
+
+	/** True while auto-restarting after a natural end; we stay `connecting` until a result arrives. */
+	private isReconnecting = false;
+
+	/** Set by a fatal `onerror` so the following `onend` goes idle instead of reconnecting. */
+	private fatalErrorSeen = false;
+
+	private stopPromise: Promise<void> | null = null;
+	private resolveStop: (() => void) | null = null;
+	private stopTimer: ReturnType<typeof setTimeout> | null = null;
 
 	/**
-	 * Reference to the audio stream being transcribed
-	 * @private
-	 */
-	private stream: MediaStream | null = null;
-
-	/**
-	 * Index of the last processed result.
-	 * Used to deduplicate results when the engine emits duplicate events.
-	 * @private
-	 */
-	private lastResultIndex: number = 0;
-
-	/**
-	 * Flag to track if we're explicitly stopping the engine.
-	 * Used to distinguish between explicit stop() calls and Web Speech API
-	 * naturally ending recognition (e.g., due to silence on Android).
-	 * @private
-	 */
-	private isStopping: boolean = false;
-
-	/**
-	 * Flag to track if we're in the middle of reconnecting.
-	 * When true, onstart won't transition to listening; we wait for onresult instead.
-	 * @private
-	 */
-	private isReconnecting: boolean = false;
-
-	/**
-	 * Constructor: Initialize the Web Speech API
-	 *
-	 * Throws an error if the Web Speech API is not available in the browser.
-	 * This is a synchronous operation.
-	 *
-	 * @throws Error if Web Speech API not supported
+	 * @throws Error if the Web Speech API is not available in this browser.
 	 */
 	constructor() {
 		super();
-		console.log('[NativeEngine] Initializing Web Speech API engine');
-		this.initializeRecognition();
-		console.log('[NativeEngine] Initialization complete');
-	}
-
-	/**
-	 * Initialize the Web Speech API recognition object
-	 *
-	 * Sets up event handlers for:
-	 * - onstart: Fired when recognition begins listening
-	 * - onresult: Fired when transcription results arrive
-	 * - onerror: Fired when recognition encounters an error
-	 * - onend: Fired when recognition stops
-	 *
-	 * @private
-	 * @throws Error if Web Speech API not supported
-	 */
-	private initializeRecognition(): void {
-		// Try both webkit and standard prefixed APIs
-		const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition;
-
-		if (!SpeechRecognition) {
-			const error = 'Web Speech API not supported in this browser';
-			console.error('[NativeEngine]', error);
-			throw new Error(error);
+		const Recognition = getSpeechRecognitionConstructor();
+		if (!Recognition) {
+			throw new Error('Web Speech API not supported in this browser');
 		}
 
-		console.log('[NativeEngine] Web Speech API available');
-		this.recognition = new SpeechRecognition();
-
-		// Configure for continuous recognition with interim results
+		this.recognition = new Recognition();
 		this.recognition.continuous = true;
 		this.recognition.interimResults = true;
 		this.recognition.lang = 'en-US';
 
-		console.log(
-			'[NativeEngine] Recognition configured: continuous=true, interimResults=true, lang=en-US'
-		);
-
-		// Event handler: Recognition started listening
-		this.recognition.onstart = () => {
-			console.log(
-				'[NativeEngine] onstart: Recognition started listening (isReconnecting=' +
-					this.isReconnecting +
-					')'
-			);
-			// Only transition to 'listening' if this is a fresh start
-			// If reconnecting, stay in 'connecting' until we get actual results
-			if (!this.isReconnecting) {
-				this.setState('listening');
-			}
-		};
-
-		// Event handler: Transcription results arrived
-		this.recognition.onresult = (event: any) => {
-			console.log(
-				`[NativeEngine] onresult: ${event.results.length} total results, index=${event.resultIndex}`
-			);
-
-			// If we were in connecting state (waiting for first result), transition to listening
-			if (this.isReconnecting) {
-				console.log(
-					'[NativeEngine] First result after reconnect, transitioning from connecting to listening'
-				);
-				this.isReconnecting = false;
-				this.setState('listening');
-			}
-
-			/**
-			 * STREAMING TRANSCRIPTION PATTERN
-			 *
-			 * The Web Speech API emits `onresult` events as the user speaks. Each event contains:
-			 * - `event.results`: Cumulative array of all speech results from session start
-			 * - `event.resultIndex`: Starting index of new/updated results in this event
-			 *
-			 * ## Problem:
-			 * Without tracking, emitting every result in the array causes duplicates:
-			 * - Same phrases appear multiple times (interim → interim → final)
-			 * - UI shows: "Hello", "Hello world", "Hello world" (3 separate entries)
-			 *
-			 * ## Solution:
-			 * Track which results have been finalized using `lastResultIndex`.
-			 * Only emit:
-			 * - New results (index >= lastResultIndex)
-			 * - Updated interim results (index < lastResultIndex but !isFinal)
-			 *
-			 * This ensures interim results update in place, and final results are emitted once.
-			 */
-
-			// Process results starting from last processed index
-			for (let i = event.resultIndex; i < event.results.length; i++) {
-				const result = event.results[i];
-				const transcript = result[0].transcript;
-				const confidence = result[0].confidence;
-				const isFinal = result.isFinal;
-
-				/**
-				 * EMISSION LOGIC:
-				 * - Emit if result is new (i >= lastResultIndex)
-				 * - Emit if result is interim (!isFinal) to allow real-time updates
-				 * - Skip if result is final but already processed (prevents duplicates)
-				 */
-				if (i >= this.lastResultIndex || !isFinal) {
-					console.log(
-						`[NativeEngine] Emitting result[${i}]: "${transcript}" (isFinal=${isFinal}, confidence=${confidence.toFixed(2)})`
-					);
-					this.emitResult({
-						text: transcript,
-						isFinal: isFinal,
-						confidence,
-						resultIndex: i,
-					});
-				} else {
-					console.log(`[NativeEngine] Skipping result[${i}]: already processed and finalized`);
-				}
-
-				/**
-				 * INDEX MANAGEMENT:
-				 * When a result becomes final, advance lastResultIndex past it.
-				 * This marks the result as processed and prevents re-emission.
-				 */
-				if (isFinal) {
-					this.lastResultIndex = i + 1;
-				}
-			}
-		};
-
-		// Event handler: Recognition encountered an error
-		this.recognition.onerror = (event: any) => {
-			console.error('[NativeEngine] onerror event:', event.error);
-			// Common error types: "no-speech", "network", "timeout", "permission-denied"
-			const error = new Error(`Speech recognition error: ${event.error}`);
-			this.emitError(error);
-		};
-
-		// Event handler: Recognition ended
-		this.recognition.onend = () => {
-			console.log(`[NativeEngine] onend: Recognition ended (isStopping=${this.isStopping})`);
-			// Only transition to idle if we explicitly called stop()
-			// Otherwise, if recognition ended naturally (e.g., due to silence on Android),
-			// we stay active since the user is still recording
-			if (this.isStopping) {
-				this.isStopping = false;
-				console.log('[NativeEngine] Explicit stop detected, transitioning to idle');
-				this.setState('idle');
-			} else if (this.state === 'listening') {
-				// Recognition ended naturally, but we're still actively recording.
-				// Set state to connecting and attempt to restart recognition
-				console.log('[NativeEngine] Natural end detected during active listening, reconnecting...');
-				this.isReconnecting = true;
-				this.setState('connecting');
-				try {
-					this.recognition.start();
-					console.log('[NativeEngine] Reconnection started');
-				} catch (error) {
-					console.error('[NativeEngine] Failed to restart recognition:', error);
-					// If restart fails, emit an error
-					this.emitError(
-						new Error(`Failed to restart recognition after natural end: ${(error as any).message}`)
-					);
-				}
-			}
-		};
+		this.recognition.onstart = () => this.handleStart();
+		this.recognition.onresult = (event) => this.handleResult(event);
+		this.recognition.onerror = (event) => this.handleError(event);
+		this.recognition.onend = () => this.handleEnd();
 	}
 
 	/**
-	 * Start transcription on the given audio stream
+	 * Begin listening.
 	 *
-	 * Begins listening to the audio stream and emitting transcription results.
-	 * Can optionally apply configuration like language code.
+	 * Waits for any in-flight `stop()` first. The engine reports `connecting` until the
+	 * browser confirms it is listening (`onstart`), which can take a moment while the
+	 * microphone permission prompt is shown.
 	 *
-	 * Important: In Safari, this MUST be called from within a click handler
-	 * or other user gesture handler due to browser security restrictions.
-	 *
-	 * @param stream - The MediaStream to transcribe (from getUserMedia)
-	 * @param config - Optional engine configuration
-	 * @param config.language - Language code (e.g., 'en-US', 'fr-FR')
-	 * @param config.continuous - Whether to recognize continuously (default: true)
-	 * @param config.interimResults - Whether to return interim results (default: true)
-	 * @throws Error if engine is already running
-	 *
-	 * @example
-	 * const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-	 * await engine.start(stream, { language: 'en-US' });
+	 * @param _stream - Unused; see the file header.
+	 * @param config - Optional language / continuous / interim overrides.
+	 * @throws Error if the engine is already running, or the recognizer refuses to start.
 	 */
-	async start(stream: MediaStream, config?: EngineConfig): Promise<void> {
-		console.log('[NativeEngine] start() called, current state:', this.state);
+	async start(_stream: MediaStream, config?: EngineConfig): Promise<void> {
+		if (this.stopPromise) await this.stopPromise;
 
-		if (this.state === 'listening') {
-			const error = 'Engine is already listening';
-			console.error('[NativeEngine]', error);
-			throw new Error(error);
+		if (this.state !== 'idle') {
+			throw new Error('Engine is already running');
 		}
 
-		this.stream = stream;
-		console.log('[NativeEngine] Audio stream acquired');
-
-		// Apply configuration overrides
-		if (config?.language) {
-			this.recognition.lang = config.language;
-			console.log('[NativeEngine] Language configured:', config.language);
-		}
-		if (config?.continuous !== undefined) {
-			this.recognition.continuous = config.continuous;
-			console.log('[NativeEngine] Continuous mode:', config.continuous);
-		}
+		if (config?.language) this.recognition.lang = config.language;
+		if (config?.continuous !== undefined) this.recognition.continuous = config.continuous;
 		if (config?.interimResults !== undefined) {
 			this.recognition.interimResults = config.interimResults;
-			console.log('[NativeEngine] Interim results:', config.interimResults);
 		}
 
-		// Start recognition
+		this.fatalErrorSeen = false;
+		this.isReconnecting = false;
+		this.lastResultIndex = 0;
+		this.setState('connecting');
+
 		try {
-			console.log('[NativeEngine] Calling recognition.start()');
 			this.recognition.start();
-			this.setState('listening');
-			console.log('[NativeEngine] Recognition started successfully');
 		} catch (error) {
-			console.warn('[NativeEngine] recognition.start() threw error:', error);
-			// Handle case where recognition is already running
-			// (user clicked start multiple times quickly)
-			if ((error as any).message?.includes('already started')) {
-				console.log('[NativeEngine] Recognition already started, aborting and restarting');
-				this.recognition.abort();
-				this.recognition.start();
-			} else {
-				throw error;
+			// Chrome throws InvalidStateError if a session is somehow still open. That
+			// session is live, so keep waiting for its onstart rather than failing.
+			if (error instanceof Error && error.message.includes('already started')) {
+				console.warn('[NativeEngine] recognition already started; reusing running session');
+				return;
 			}
+			this.setState('idle');
+			throw error;
 		}
 	}
 
 	/**
-	 * Stop transcription and clean up resources
+	 * Stop listening and resolve once the recognizer has actually ended.
 	 *
-	 * Stops listening, releases the audio stream, and transitions to idle state.
-	 * Safe to call even if not currently listening.
-	 *
-	 * @returns Promise that resolves when stopped (immediately)
+	 * Final results that the browser flushes while stopping are still delivered before
+	 * this resolves. Safe to call when idle or repeatedly. Does not touch the audio stream.
 	 */
-	async stop(): Promise<void> {
-		console.log('[NativeEngine] stop() called, current state:', this.state);
+	stop(): Promise<void> {
+		if (this.stopPromise) return this.stopPromise;
+		if (this.state === 'idle') return Promise.resolve();
 
-		if (this.state === 'idle') {
-			console.log('[NativeEngine] Already idle, nothing to stop');
-			return;
-		}
+		this.isStopping = true;
+		const stopped = new Promise<void>((resolve) => {
+			this.resolveStop = resolve;
+			// If onend never arrives (recognizer already dead), don't hang the caller.
+			this.stopTimer = setTimeout(() => this.completeStop(), STOP_TIMEOUT_MS);
+		});
+		this.stopPromise = stopped;
 
 		try {
-			// Set flag to indicate we're explicitly stopping
-			// This prevents onend handler from restarting recognition
-			this.isStopping = true;
-			console.log('[NativeEngine] isStopping flag set to true');
-
-			// Tell recognition to stop accepting audio
-			console.log('[NativeEngine] Calling recognition.stop()');
 			this.recognition.stop();
 		} catch (error) {
-			console.warn('[NativeEngine] Error stopping recognition:', error);
+			console.warn('[NativeEngine] recognition.stop() threw:', error);
+			this.completeStop();
 		}
 
-		// Release the audio stream and stop all tracks
-		if (this.stream) {
-			console.log('[NativeEngine] Stopping audio tracks');
-			this.stream.getTracks().forEach((track) => {
-				console.log(`[NativeEngine] Stopping track: ${track.kind} (${track.readyState})`);
-				track.stop();
-			});
-			this.stream = null;
-		}
-
-		console.log('[NativeEngine] stop() complete');
+		return stopped;
 	}
 
-	/**
-	 * Get metadata about this engine
-	 *
-	 * Returns information for display in the UI and logging.
-	 *
-	 * @returns Engine metadata object
-	 */
 	getMetadata(): EngineMetadata {
 		return {
 			name: 'Web Speech API',
 			version: '1.0.0',
 			type: 'native',
+			// Representative subset; actual support depends on the browser and OS.
 			supportedLanguages: [
 				'en-US',
 				'en-GB',
@@ -389,9 +179,100 @@ export class NativeEngine extends TranscriptionEngine {
 				'ja-JP',
 				'zh-CN',
 				'pt-BR',
-				// Note: Actual support depends on browser and OS
-				// Full list available at: https://www.w3.org/TR/speech-api/
 			],
 		};
+	}
+
+	/** Finish an explicit stop: clear bookkeeping, go idle, release the waiting caller. */
+	private completeStop(): void {
+		if (this.stopTimer) clearTimeout(this.stopTimer);
+		this.stopTimer = null;
+		this.isStopping = false;
+		this.isReconnecting = false;
+		this.setState('idle');
+
+		const resolve = this.resolveStop;
+		this.resolveStop = null;
+		this.stopPromise = null;
+		resolve?.();
+	}
+
+	private handleStart(): void {
+		this.lastResultIndex = 0;
+		// After an auto-restart we stay `connecting` until real results confirm audio flows.
+		if (!this.isReconnecting && !this.isStopping) {
+			this.setState('listening');
+		}
+	}
+
+	/**
+	 * Route recognizer results to subscribers.
+	 *
+	 * `event.results` is cumulative for the session and `event.resultIndex` marks the first
+	 * entry that changed. Interim entries are re-emitted as they update; a final entry is
+	 * emitted once and then `lastResultIndex` moves past it, so a repeated event for the
+	 * same final (seen on some Android builds) cannot duplicate it.
+	 */
+	private handleResult(event: SpeechRecognitionEventLike): void {
+		if (this.isReconnecting) {
+			this.isReconnecting = false;
+			this.setState('listening');
+		}
+
+		for (let i = event.resultIndex; i < event.results.length; i++) {
+			const result = event.results[i];
+			const { transcript, confidence } = result[0];
+
+			if (i >= this.lastResultIndex || !result.isFinal) {
+				this.emitResult({ text: transcript, isFinal: result.isFinal, confidence, resultIndex: i });
+			}
+			if (result.isFinal) {
+				this.lastResultIndex = i + 1;
+			}
+		}
+	}
+
+	private handleError(event: SpeechRecognitionErrorEventLike): void {
+		if (BENIGN_ERRORS.has(event.error)) {
+			console.debug('[NativeEngine] benign recognition error:', event.error);
+			return;
+		}
+		console.error('[NativeEngine] recognition error:', event.error);
+		if (FATAL_ERRORS.has(event.error)) {
+			this.fatalErrorSeen = true;
+		}
+		this.emitError(new Error(`Speech recognition error: ${event.error}`));
+	}
+
+	/**
+	 * Recognizer ended. Three cases: we asked for it (finish the stop), a fatal error
+	 * occurred (go idle, do not retry), or the browser ended it on its own (restart).
+	 */
+	private handleEnd(): void {
+		if (this.isStopping) {
+			this.completeStop();
+			return;
+		}
+		if (this.fatalErrorSeen) {
+			this.fatalErrorSeen = false;
+			this.isReconnecting = false;
+			this.setState('idle');
+			return;
+		}
+		if (this.state === 'idle') return;
+
+		console.log('[NativeEngine] recognition ended on its own, reconnecting');
+		this.isReconnecting = true;
+		this.lastResultIndex = 0;
+		this.setState('connecting');
+		try {
+			this.recognition.start();
+		} catch (error) {
+			console.error('[NativeEngine] failed to restart recognition:', error);
+			this.isReconnecting = false;
+			this.setState('idle');
+			const reason = error instanceof Error ? error.message : String(error);
+			this.emitError(new Error(`Failed to restart recognition: ${reason}`));
+		}
 	}
 }

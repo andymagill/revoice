@@ -1,50 +1,23 @@
 <script lang="ts">
-	import { setContext } from 'svelte';
+	import { untrack, type Snippet } from 'svelte';
+	import { setTranscriptionEngine } from '$lib/context';
 	import type { ITranscriptionEngine } from '$lib/types';
 
 	/**
-	 * TranscriptionProvider Component
+	 * Makes the transcription engine available to descendants through context, so widgets
+	 * like TranscriptionStatusIndicator can subscribe to it without prop drilling.
 	 *
-	 * A context provider component that injects a transcription engine instance
-	 * into the Svelte component tree, making it available to all descendants.
-	 *
-	 * Purpose: Enable any child component to access the active transcription engine
-	 * without passing it as a prop through every intermediate component (prop drilling).
-	 *
-	 * Pattern: Implements the Svelte Context API pattern for dependency injection
-	 *
-	 * How It Works:
-	 * 1. Parent component creates TranscriptionProvider with engine instance
-	 * 2. Provider uses setContext() to inject engine into Svelte's context system
-	 * 3. Any child/descendant can call getContext() to retrieve engine
-	 * 4. Engine is shared across entire subtree
-	 *
-	 * Context Key: 'transcriptionEngine' (string constant)
-	 *
-	 * Benefits Over Props:
-	 * - No prop drilling through 5+ intermediate components
-	 * - Cleaner component APIs (fewer required props)
-	 * - Easier to change engine implementation
-	 *
-	 * Limitations:
-	 * - getContext() must be called during component initialization
-	 * - If context not set, getContext() returns undefined
-	 * - Can only access context in descendants, not siblings/parents
-	 *
-	 * Current Usage in App:
-	 * - Defined in: src/routes/+page.svelte
-	 * - Wraps: Sidebar, Header, MainContent
-	 * - Accessed by: Recording controls, playback logic
+	 * The engine is fixed for the provider's lifetime, so it is captured once. `null` is a
+	 * valid value and means the browser has no speech recognition; consumers must cope.
 	 */
-
 	interface Props {
-		engine: ITranscriptionEngine;
-		children?: any;
+		engine: ITranscriptionEngine | null;
+		children?: Snippet;
 	}
 
 	let { engine, children }: Props = $props();
 
-	setContext<ITranscriptionEngine>('transcriptionEngine', (() => engine)());
+	setTranscriptionEngine(untrack(() => engine));
 </script>
 
 {#if children}

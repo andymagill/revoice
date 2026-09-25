@@ -44,6 +44,15 @@ export interface TranscriptionResult {
 }
 
 /**
+ * Lifecycle state of a transcription engine.
+ *
+ * - `idle`: not running
+ * - `connecting`: started (or auto-reconnecting) but no audio/result has been confirmed yet
+ * - `listening`: recognition is live and results can arrive
+ */
+export type EngineState = 'idle' | 'connecting' | 'listening';
+
+/**
  * Configuration options for a transcription engine
  *
  * @interface EngineConfig
@@ -102,7 +111,7 @@ export interface ITranscriptionEngine {
 	 * @returns 'connecting' - Recording/transcription being sent, awaiting first result
 	 * @returns 'listening' - Recording/transcription being sent and received (results flowing)
 	 */
-	getState(): 'idle' | 'connecting' | 'listening';
+	getState(): EngineState;
 
 	/**
 	 * Subscribe to transcription results
@@ -147,7 +156,7 @@ export interface ITranscriptionEngine {
 	 *   console.log('Engine is now:', state);
 	 * });
 	 */
-	onStateChange(callback: (state: 'idle' | 'connecting' | 'listening') => void): () => void;
+	onStateChange(callback: (state: EngineState) => void): () => void;
 
 	/**
 	 * Get metadata about the engine

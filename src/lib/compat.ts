@@ -1,40 +1,39 @@
 /**
- * Compatibility detection for ReVoice
- * Handles browser differences and API support checks
+ * Browser capability detection for ReVoice.
+ *
+ * Used by CompatibilityShield to warn users up front instead of failing silently.
+ * Every function touches `window`/`navigator`, so call them client-side only (the app
+ * runs with `ssr = false`).
  */
 
-/**
- * Check if Web Speech API is supported
- */
+import { getSpeechRecognitionConstructor } from './engines/speech-recognition';
+
+/** Whether the Web Speech API (live transcription) is available. */
 export function isWebSpeechSupported(): boolean {
-	const SpeechRecognition =
-		(window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
-	return !!SpeechRecognition;
+	return getSpeechRecognitionConstructor() !== null;
 }
 
-/**
- * Check if MediaRecorder API is supported
- */
+/** Whether MediaRecorder (audio capture) is available. */
 export function isMediaRecorderSupported(): boolean {
 	return !!window.MediaRecorder;
 }
 
-/**
- * Check if Web Audio API is supported
- */
+/** Whether the Web Audio API (visualizer, playback analysis) is available. */
 export function isWebAudioSupported(): boolean {
-	return !!(window.AudioContext || (window as any).webkitAudioContext);
+	return !!(
+		window.AudioContext ||
+		(window as unknown as { webkitAudioContext?: unknown }).webkitAudioContext
+	);
 }
 
-/**
- * Check if IndexedDB is supported
- */
+/** Whether IndexedDB (session storage) is available. */
 export function isIndexedDBSupported(): boolean {
 	return !!(window.indexedDB && typeof window.indexedDB.open === 'function');
 }
 
 /**
- * Get current browser name
+ * Best-effort browser family from the user agent.
+ * Order matters: Edge and Chrome UAs both contain "Chrome/", and Chrome UAs contain "Safari/".
  */
 export function getBrowserName(): 'chrome' | 'safari' | 'firefox' | 'edge' | 'unknown' {
 	const ua = navigator.userAgent;
@@ -47,23 +46,7 @@ export function getBrowserName(): 'chrome' | 'safari' | 'firefox' | 'edge' | 'un
 	return 'unknown';
 }
 
-/**
- * Check if running on iOS
- */
-export function isIOS(): boolean {
-	return /iPad|iPhone|iPod/.test(navigator.userAgent);
-}
-
-/**
- * Check if running on macOS
- */
-export function isMacOS(): boolean {
-	return /Mac/.test(navigator.userAgent) && !isIOS();
-}
-
-/**
- * Comprehensive API support check
- */
+/** Result of `checkApiSupport`: one flag per required API plus their conjunction. */
 export interface ApiSupport {
 	webSpeech: boolean;
 	mediaRecorder: boolean;
@@ -72,6 +55,7 @@ export interface ApiSupport {
 	allSupported: boolean;
 }
 
+/** Check every API ReVoice depends on. */
 export function checkApiSupport(): ApiSupport {
 	const support = {
 		webSpeech: isWebSpeechSupported(),
@@ -82,22 +66,11 @@ export function checkApiSupport(): ApiSupport {
 
 	return {
 		...support,
-		allSupported: Object.values(support).every((v) => v === true),
+		allSupported: Object.values(support).every(Boolean),
 	};
 }
 
-/**
- * Get recommended engine for current browser
- */
-export function getRecommendedEngine(): 'native' {
-	// For PoC, only native engine is available
-	// Future: return 'deepgram' | 'assemblyai' | 'native' etc.
-	return 'native';
-}
-
-/**
- * Browser-specific initialization notes
- */
+/** Short, browser-specific caveats to show in the compatibility warning. */
 export function getBrowserSpecificNotes(): string[] {
 	const browser = getBrowserName();
 	const notes: string[] = [];

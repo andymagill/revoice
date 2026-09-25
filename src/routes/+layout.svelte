@@ -1,100 +1,58 @@
 <script lang="ts">
 	import '../app.css';
-	import { onMount, getContext, setContext } from 'svelte';
-	import { getAllSessions, type Session } from '$lib/db';
+	import { onMount } from 'svelte';
+	import { purgeLegacyBackups, type Session } from '$lib/db';
+	import { setSessionStore } from '$lib/context';
+	import { SessionStore } from '$lib/sessions.svelte';
+	import { formatDuration } from '$lib/utils';
 	import CompatibilityShield from '$lib/components/CompatibilityShield.svelte';
-	import AudioPlaybackProvider from '$lib/components/AudioPlaybackProvider.svelte';
-	import PlaybackDock from '$lib/components/PlaybackDock.svelte';
 	import Footer from '$lib/components/Footer.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
-	import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card/index.js';
+	import { Card } from '$lib/components/ui/card/index.js';
 
 	/**
-	 * Root Layout
-	 * Contains the main navigation, history sidebar, and persistent playback dock
+	 * Root layout: history sidebar, header and page outlet.
+	 *
+	 * Owns the SessionStore and shares it with the page through context; all selection,
+	 * deletion and "new session" actions go through the store so they are sequenced with
+	 * any recording in progress.
 	 */
-
-	let sessions: Session[] = $state([]);
-	let currentSession: Session | null = $state(null);
-	let sidebarOpen: boolean = $state(false);
-	let playingAudio: HTMLAudioElement | null = $state(null);
-	let currentPlayingSessionId: number | null = $state(null);
-	let clearRequested: boolean = $state(false);
 
 	let { children } = $props();
 
-	// Provide currentSession to child components via Svelte 5 context
-	setContext('currentSession', {
-		get current() {
-			return currentSession;
-		},
-		set(value: Session | null) {
-			currentSession = value;
-		},
-		get clearRequested() {
-			return clearRequested;
-		},
-		set clearRequested(value: boolean) {
-			clearRequested = value;
-		},
+	const store = new SessionStore();
+	setSessionStore(store);
+
+	let sidebarOpen = $state(false);
+
+	onMount(() => {
+		purgeLegacyBackups();
+		void store.refresh();
 	});
 
-	onMount(async () => {
-		sessions = await getAllSessions();
-	});
+	function selectSession(session: Session) {
+		sidebarOpen = false;
+		void store.select(session);
+	}
 
 	async function deleteSession(id: number) {
-		// Confirm before deleting
-		if (!confirm('Delete this session? This cannot be undone.')) {
+		if (!confirm('Delete this session? This cannot be undone.')) return;
+		try {
+			await store.remove(id);
+		} catch (error) {
+			console.error('Failed to delete session:', error);
+		}
+	}
+
+	async function clearAllData() {
+		if (!confirm('This will permanently delete all recorded sessions and audio. Continue?')) {
 			return;
 		}
-		const { deleteSession: deleteSessionDB } = await import('$lib/db');
-		await deleteSessionDB(id);
-		sessions = await getAllSessions();
-		if (currentSession?.id === id) {
-			currentSession = null;
+		try {
+			await store.clearAll();
+		} catch (error) {
+			console.error('Failed to clear data:', error);
 		}
-	}
-
-	async function playSession(session: Session) {
-		const { getSessionAudio } = await import('$lib/db');
-		const blob = await getSessionAudio(session.id!);
-		if (!blob) return;
-
-		if (playingAudio) {
-			playingAudio.pause();
-		}
-
-		const url = URL.createObjectURL(blob);
-		playingAudio = new Audio(url);
-		currentPlayingSessionId = session.id!;
-		playingAudio.play();
-
-		playingAudio.onended = () => {
-			currentPlayingSessionId = null;
-			URL.revokeObjectURL(url);
-		};
-	}
-
-	async function handleNewSession() {
-		// Stop any playing audio
-		if (playingAudio) {
-			playingAudio.pause();
-			playingAudio = null;
-		}
-		// Clear playback state
-		currentPlayingSessionId = null;
-		// Signal explicit clear request before resetting session
-		clearRequested = true;
-		// Reset current session context
-		currentSession = null;
-	}
-
-	function formatTime(ms: number): string {
-		const seconds = Math.floor(ms / 1000);
-		const minutes = Math.floor(seconds / 60);
-		const secs = seconds % 60;
-		return `${minutes}:${secs.toString().padStart(2, '0')}`;
 	}
 </script>
 
@@ -122,8 +80,8 @@
 
 		<!-- Sidebar -->
 		<div
-			class={`w-0 md:w-64 ${
-				sidebarOpen ? 'w-64' : 'md:w-64'
+			class={`${
+				sidebarOpen ? 'w-64' : 'w-0 md:w-64'
 			} bg-background border-r border-border transition-all duration-300 overflow-hidden flex flex-col fixed md:static z-50 md:z-auto h-full md:h-auto`}
 		>
 			<div class="p-4 border-b border-border">
@@ -133,37 +91,32 @@
 
 			<div class="flex-1 overflow-y-auto p-4 space-y-2">
 				<p class="text-xs font-semibold text-muted-foreground uppercase">Recent Sessions</p>
-				{#if sessions.length === 0}
+				{#if store.sessions.length === 0}
 					<p class="text-sm text-muted-foreground text-center py-8">No sessions yet</p>
 				{:else}
-					{#each sessions as session (session.id)}
+					{#each store.sessions as session (session.id)}
 						<Card
 							class="p-3 cursor-pointer hover:bg-accent hover:text-accent-foreground transition bg-accent/10"
-							onclick={() => {
-								currentSession = session;
-								sidebarOpen = false;
-							}}
+							onclick={() => selectSession(session)}
 							role="button"
 							tabindex="0"
 							onkeydown={(e: KeyboardEvent) => {
-								if (e.key === 'Enter') {
-									currentSession = session;
-									sidebarOpen = false;
-								}
+								if (e.key === 'Enter') selectSession(session);
 							}}
 						>
 							<p class="font-medium text-sm text-foreground">{session.title}</p>
 							<div class="flex justify-between items-center mt-2 text-xs text-muted-foreground">
-								<span>{formatTime(session.duration)}</span>
+								<span>{formatDuration(session.duration)}</span>
 								<div class="space-x-1">
 									<Button
 										onclick={(e: MouseEvent) => {
 											e.stopPropagation();
-											deleteSession(session.id!);
+											void deleteSession(session.id!);
 										}}
 										variant="ghost"
 										size="sm"
 										class="h-6 px-1 text-destructive"
+										aria-label="Delete session"
 									>
 										×
 									</Button>
@@ -176,17 +129,7 @@
 
 			<div class="p-4 border-t border-border">
 				<Button
-					onclick={async () => {
-						if (
-							!confirm('This will permanently delete all recorded sessions and audio. Continue?')
-						) {
-							return;
-						}
-						const { clearAllData } = await import('$lib/db');
-						await clearAllData();
-						sessions = [];
-						currentSession = null;
-					}}
+					onclick={clearAllData}
 					variant="ghost"
 					class="w-full text-xs text-destructive hover:text-destructive hover:bg-destructive/10 py-2"
 				>
@@ -197,46 +140,27 @@
 
 		<!-- Main Content -->
 		<div class="flex-1 flex flex-col">
-			<!-- Header -->
 			<div class="bg-background border-b border-border px-4 py-3 flex items-center justify-between">
 				<Button
 					onclick={() => (sidebarOpen = !sidebarOpen)}
 					variant="ghost"
 					size="icon"
 					class="p-2 md:hidden"
+					aria-label="Toggle sidebar"
 				>
 					☰
 				</Button>
 				<h2 class="text-lg font-semibold text-foreground">
-					{currentSession ? currentSession.title : 'New Session'}
+					{store.selected ? store.selected.title : 'New Session'}
 				</h2>
-				<Button onclick={handleNewSession} variant="outline" size="sm" class="text-xs">
+				<Button onclick={() => store.startNew()} variant="outline" size="sm" class="text-xs">
 					New Session
 				</Button>
 			</div>
 
-			<!-- Content -->
 			<div class="flex-1 overflow-auto p-4 flex flex-col">
 				{@render children()}
 
-				<!-- Playback Dock -->
-				{#if currentPlayingSessionId !== null}
-					<AudioPlaybackProvider audio={playingAudio}>
-						<PlaybackDock
-							{playingAudio}
-							{currentPlayingSessionId}
-							onClose={() => {
-								if (playingAudio) {
-									playingAudio.pause();
-									playingAudio = null;
-									currentPlayingSessionId = null;
-								}
-							}}
-						/>
-					</AudioPlaybackProvider>
-				{/if}
-
-				<!-- Footer -->
 				<div class="mt-auto">
 					<Footer />
 				</div>

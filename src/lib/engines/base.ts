@@ -1,242 +1,105 @@
 /**
- * Abstract Base Class for Transcription Engines
+ * Abstract base class for transcription engines.
  *
- * All transcription engines must extend this class to implement the
- * ITranscriptionEngine interface. This base class provides:
- *
- * - Event management (onResult, onError subscriptions)
- * - State management (idle, listening, processing)
- * - Callback emission utilities
- *
- * Concrete implementations should:
- * 1. Initialize their specific transcription service in constructor
- * 2. Implement start() to begin transcription
- * 3. Implement stop() to clean up resources
- * 4. Call emitResult() when transcription results arrive
- * 5. Call emitError() if errors occur
- * 6. Implement getMetadata() for engine identification
+ * Owns the parts every engine shares — subscriber sets, the state machine and safe
+ * emission — so a concrete engine only implements `start`, `stop` and `getMetadata`
+ * and calls `emitResult` / `emitError` / `setState` as its backend reports progress.
  *
  * @example
  * class MyEngine extends TranscriptionEngine {
  *   async start(stream, config) {
- *     // Initialize transcription service
+ *     this.setState('connecting');
+ *     // ...open the backend, then on first audio: this.setState('listening')
  *   }
- *
- *   private onTranscription(text, isFinal) {
+ *   private onTranscript(text: string, isFinal: boolean) {
  *     this.emitResult({ text, isFinal });
  *   }
  * }
  */
 
 import type {
-	ITranscriptionEngine,
-	TranscriptionResult,
 	EngineConfig,
 	EngineMetadata,
+	EngineState,
+	ITranscriptionEngine,
+	TranscriptionResult,
 } from '../types';
 
 export abstract class TranscriptionEngine implements ITranscriptionEngine {
-	/**
-	 * Current engine state: 'idle' | 'connecting' | 'listening'
-	 * @protected
-	 */
-	protected state: 'idle' | 'connecting' | 'listening' = 'idle';
+	protected state: EngineState = 'idle';
+	protected resultCallbacks = new Set<(result: TranscriptionResult) => void>();
+	protected errorCallbacks = new Set<(error: Error) => void>();
+	protected stateChangeCallbacks = new Set<(state: EngineState) => void>();
 
-	/**
-	 * Set of callbacks subscribed to transcription results
-	 * @protected
-	 */
-	protected resultCallbacks: Set<(result: TranscriptionResult) => void> = new Set();
-
-	/**
-	 * Set of callbacks subscribed to errors
-	 * @protected
-	 */
-	protected errorCallbacks: Set<(error: Error) => void> = new Set();
-
-	/**
-	 * Set of callbacks subscribed to state changes
-	 * @protected
-	 */
-	protected stateChangeCallbacks: Set<(state: 'idle' | 'connecting' | 'listening') => void> =
-		new Set();
-
-	/**
-	 * Current engine configuration (language, continuous mode, etc.)
-	 * @protected
-	 */
-	protected config: EngineConfig = {};
-
-	/**
-	 * Abstract method: Start transcription
-	 * Must be implemented by subclasses to begin listening to the audio stream
-	 */
+	/** Begin transcribing. Engines that capture audio themselves may ignore `stream`. */
 	abstract start(stream: MediaStream, config?: EngineConfig): Promise<void>;
 
-	/**
-	 * Abstract method: Stop transcription
-	 * Must be implemented by subclasses to clean up and release resources
-	 */
+	/** Stop transcribing. Must be safe to call when idle and resolve once the engine is idle. */
 	abstract stop(): Promise<void>;
 
-	/**
-	 * Abstract method: Get engine metadata
-	 * Must be implemented by subclasses to provide engine identification
-	 */
 	abstract getMetadata(): EngineMetadata;
 
-	/**
-	 * Get the current engine state
-	 *
-	 * @returns Current state: 'idle', 'connecting', or 'listening'
-	 */
-	getState(): 'idle' | 'connecting' | 'listening' {
+	getState(): EngineState {
 		return this.state;
 	}
 
 	/**
-	 * Protected helper to update engine state
-	 * Called by subclasses when state changes
-	 *
-	 * @protected
-	 * @param state - New state value
+	 * Move to a new state and notify subscribers. No-op when the state is unchanged, so
+	 * subclasses can call it unconditionally.
 	 */
-	protected setState(state: 'idle' | 'connecting' | 'listening'): void {
-		if (this.state !== state) {
-			console.log(`[TranscriptionEngine] State transition: ${this.state} → ${state}`);
-			this.state = state;
-			this.emitStateChange(state);
-		}
+	protected setState(state: EngineState): void {
+		if (this.state === state) return;
+		console.log(`[TranscriptionEngine] State transition: ${this.state} → ${state}`);
+		this.state = state;
+		this.emit(this.stateChangeCallbacks, state);
 	}
 
 	/**
-	 * Subscribe to transcription results
-	 *
-	 * Callback will be called each time transcription returns a result.
-	 * Results may be interim (mid-word) or final (speaker paused).
-	 *
-	 * @param callback - Function to call with each result
-	 * @returns Unsubscribe function that removes the listener
-	 *
-	 * @example
-	 * const unsub = engine.onResult(result => {
-	 *   console.log(result.text);
-	 * });
-	 * // Later...
-	 * unsub();
+	 * Subscribe to transcription results (interim and final).
+	 * @returns Unsubscribe function.
 	 */
 	onResult(callback: (result: TranscriptionResult) => void): () => void {
-		console.log(
-			'[TranscriptionEngine] onResult subscription added, total subscribers:',
-			this.resultCallbacks.size + 1
-		);
 		this.resultCallbacks.add(callback);
-		// Return unsubscribe function
-		return () => {
-			this.resultCallbacks.delete(callback);
-			console.log(
-				'[TranscriptionEngine] onResult unsubscribed, remaining subscribers:',
-				this.resultCallbacks.size
-			);
-		};
+		return () => this.resultCallbacks.delete(callback);
 	}
 
 	/**
-	 * Subscribe to transcription errors
-	 *
-	 * Callback will be called if the engine encounters an error (e.g.,
-	 * "no speech detected", "service unavailable", network errors).
-	 *
-	 * @param callback - Function to call with error details
-	 * @returns Unsubscribe function that removes the listener
-	 *
-	 * @example
-	 * engine.onError(error => {
-	 *   console.error('Transcription failed:', error.message);
-	 * });
+	 * Subscribe to engine errors (e.g. permission denied, network failure).
+	 * @returns Unsubscribe function.
 	 */
 	onError(callback: (error: Error) => void): () => void {
-		console.log(
-			'[TranscriptionEngine] onError subscription added, total subscribers:',
-			this.errorCallbacks.size + 1
-		);
 		this.errorCallbacks.add(callback);
-		// Return unsubscribe function
-		return () => {
-			this.errorCallbacks.delete(callback);
-			console.log(
-				'[TranscriptionEngine] onError unsubscribed, remaining subscribers:',
-				this.errorCallbacks.size
-			);
-		};
+		return () => this.errorCallbacks.delete(callback);
 	}
 
 	/**
-	 * Subscribe to engine state changes
-	 *
-	 * Callback will be called whenever the engine transitions between states
-	 * (idle ↔ connecting ↔ listening).
-	 *
-	 * @param callback - Function to call with new state
-	 * @returns Unsubscribe function that removes the listener
-	 *
-	 * @example
-	 * engine.onStateChange(state => {
-	 *   console.log('Engine state:', state);
-	 * });
+	 * Subscribe to state changes (idle ↔ connecting ↔ listening).
+	 * @returns Unsubscribe function.
 	 */
-	onStateChange(callback: (state: 'idle' | 'connecting' | 'listening') => void): () => void {
-		console.log(
-			'[TranscriptionEngine] onStateChange subscription added, total subscribers:',
-			this.stateChangeCallbacks.size + 1
-		);
+	onStateChange(callback: (state: EngineState) => void): () => void {
 		this.stateChangeCallbacks.add(callback);
-		// Return unsubscribe function
-		return () => {
-			this.stateChangeCallbacks.delete(callback);
-			console.log(
-				'[TranscriptionEngine] onStateChange unsubscribed, remaining subscribers:',
-				this.stateChangeCallbacks.size
-			);
-		};
+		return () => this.stateChangeCallbacks.delete(callback);
 	}
 
-	/**
-	 * Protected helper to emit a transcription result to all subscribers
-	 * Called by subclasses when transcription completes
-	 *
-	 * @protected
-	 * @param result - The transcription result to emit
-	 */
 	protected emitResult(result: TranscriptionResult): void {
-		for (const callback of this.resultCallbacks) {
-			callback(result);
-		}
+		this.emit(this.resultCallbacks, result);
 	}
 
-	/**
-	 * Protected helper to emit an error to all subscribers
-	 * Called by subclasses when an error occurs
-	 *
-	 * @protected
-	 * @param error - The error to emit
-	 */
 	protected emitError(error: Error): void {
-		for (const callback of this.errorCallbacks) {
-			callback(error);
-		}
+		this.emit(this.errorCallbacks, error);
 	}
 
 	/**
-	 * Protected helper to emit a state change to all subscribers
-	 * Called internally by setState() when state changes
-	 *
-	 * @protected
-	 * @param state - The new state
+	 * Deliver a value to every subscriber, isolating failures: one throwing listener must
+	 * not stop the others from seeing the event or break the engine's own event handler.
 	 */
-	protected emitStateChange(state: 'idle' | 'connecting' | 'listening'): void {
-		for (const callback of this.stateChangeCallbacks) {
-			callback(state);
+	private emit<T>(callbacks: Set<(value: T) => void>, value: T): void {
+		for (const callback of [...callbacks]) {
+			try {
+				callback(value);
+			} catch (error) {
+				console.error('[TranscriptionEngine] Subscriber threw:', error);
+			}
 		}
 	}
 }
