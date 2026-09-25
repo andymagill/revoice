@@ -469,9 +469,9 @@ For issues, questions, or feature requests:
 **Status**: PoC (Production-Ready for Testing)
 
 ```sh
-npm run build
+pnpm run build
 ```
 
-You can preview the production build with `npm run preview`.
+You can preview the production build with `pnpm run preview`.
 
 > To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.

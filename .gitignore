@@ -21,3 +21,7 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Package managers: this project uses pnpm (pnpm-lock.yaml is the only lockfile)
+package-lock.json
+yarn.lock
