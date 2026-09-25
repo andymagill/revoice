@@ -1,10 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { getSessionStore } from '$lib/context';
+	import { diagState, installDiagnostics } from '$lib/diagnostics.svelte';
 	import { NativeEngine } from '$lib/engines/native';
 	import { Recorder } from '$lib/recorder.svelte';
 	import AudioPlaybackControls from '$lib/components/AudioPlaybackControls.svelte';
 	import AudioPlaybackProvider from '$lib/components/AudioPlaybackProvider.svelte';
+	import DebugPanel from '$lib/components/DebugPanel.svelte';
 	import EqVisualizer from '$lib/components/EqVisualizer.svelte';
 	import RecordingControls from '$lib/components/RecordingControls.svelte';
 	import TranscriptionProvider from '$lib/components/TranscriptionProvider.svelte';
@@ -72,6 +74,8 @@
 	}
 
 	onMount(() => {
+		const stopDiagnostics = installDiagnostics();
+
 		// Selecting or resetting a session must first save whatever is being recorded.
 		const detach = store.attach({
 			open: async (session) => {
@@ -86,6 +90,7 @@
 
 		return () => {
 			detach();
+			stopDiagnostics();
 			recorder.dispose();
 		};
 	});
@@ -160,3 +165,7 @@
 		</div>
 	</AudioPlaybackProvider>
 </TranscriptionProvider>
+
+{#if diagState.debug}
+	<DebugPanel />
+{/if}

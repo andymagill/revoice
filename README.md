@@ -183,6 +183,22 @@ If any API is missing, users see a warning but can continue (graceful degradatio
 
 These are handled transparently in the `NativeEngine` and `audio.ts` utilities.
 
+#### Android-Specific Behavior
+
+On Android, Chrome hands speech recognition to the system speech service, which opens its own microphone capture. If the page's recorder already holds the microphone, the service can receive silence, end immediately and restart (you may hear the start chime repeat). ReVoice detects this (repeated sessions that end within seconds without a result), stops retrying and shows an error while audio recording continues.
+
+### Debugging on Mobile
+
+Add `?debug=1` to the URL to show an on-screen log (recorder, microphone, MediaRecorder, speech engine, connectivity and visibility events, plus an environment snapshot). Use **Copy** to export it as JSON, **Close** to hide it (`?debug=0` also turns it off). The same events go to `console.debug`, so `chrome://inspect` works too.
+
+`?debug=1&probe=nogum` runs speech recognition without opening the microphone or recorder. If transcription works with the probe but not without it, the recorder's own capture is starving the speech service.
+
+What to look for in the log:
+
+- `speech onstart` then `audiostart` but never `soundstart` or `onresult`: the recognizer is running but hears nothing.
+- `mic track-muted`: another capturer took the microphone from the page.
+- `speech gave-up`: the retry limit was reached.
+
 ## Component Overview
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full map. The main pieces:
