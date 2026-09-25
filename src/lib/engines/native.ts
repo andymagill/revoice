@@ -99,6 +99,59 @@ const FATAL_ERRORS = new Set([
 /** Errors that are routine during normal use and are not worth surfacing to the user. */
 const BENIGN_ERRORS = new Set(['no-speech', 'aborted']);
 
+/**
+ * How alike two strings must be (0-1, edit distance over the longer length) for a later
+ * result to count as a revision of an earlier one rather than a different utterance.
+ */
+const REVISION_SIMILARITY = 0.6;
+
+/** Case-insensitive similarity of two short strings in [0, 1] (1 = identical). */
+function similarity(a: string, b: string): number {
+	const x = a.toLowerCase();
+	const y = b.toLowerCase();
+	const longest = Math.max(x.length, y.length);
+	if (longest === 0) return 1;
+
+	// Levenshtein distance, one row at a time.
+	let previous = Array.from({ length: y.length + 1 }, (_, j) => j);
+	for (let i = 1; i <= x.length; i++) {
+		const current = [i];
+		for (let j = 1; j <= y.length; j++) {
+			current[j] = Math.min(
+				previous[j] + 1,
+				current[j - 1] + 1,
+				previous[j - 1] + (x[i - 1] === y[j - 1] ? 0 : 1)
+			);
+		}
+		previous = current;
+	}
+	return 1 - previous[y.length] / longest;
+}
+
+/**
+ * If `next` continues `earlier`, return the part of `next` after it; otherwise `null`.
+ *
+ * "Continues" means `next` starts with `earlier`, or starts with something close to it: the
+ * recognizer is allowed to revise words it already reported ("this is their" then
+ * "this is there a test"). Comparing only the first `earlier.length` characters keeps a
+ * revised early word from hiding a real continuation, while an unrelated utterance
+ * ("hello there" then "good morning") scores low and yields `null`.
+ */
+function remainderAfter(earlier: string, next: string): string | null {
+	const head = next.slice(0, earlier.length);
+	if (
+		head.toLowerCase() !== earlier.toLowerCase() &&
+		similarity(earlier, head) < REVISION_SIMILARITY
+	) {
+		return null;
+	}
+
+	let rest = next.slice(earlier.length);
+	// A revision can change word lengths; never start the remainder in the middle of a word.
+	if (/^\S/.test(rest) && /\S$/.test(head)) rest = rest.replace(/^\S+/, '');
+	return rest.trim();
+}
+
 export interface NativeEngineOptions {
 	/**
 	 * Merge "final" results that each repeat the previous one plus a few words into a single
@@ -431,20 +484,24 @@ export class NativeEngine extends TranscriptionEngine {
 	/**
 	 * Handle a final result when the browser repeats the text so far in each one.
 	 *
-	 * The text is held back and shown as interim. If the next final extends it, it replaces
-	 * the held text; if it is something else, the held text is committed first. Words that
-	 * repeat text already committed in this session (after a pause) are stripped so they
-	 * are not shown twice.
+	 * The text is held back and shown as interim. If the next final extends or revises it
+	 * (see `remainderAfter`), it replaces the held text; if it is something else, the held
+	 * text is committed first. Words that repeat text already committed in this session
+	 * (after a pause) are stripped so they are not shown twice. Text that was already
+	 * committed cannot be retracted, so a revision of it is not applied.
 	 */
 	private collapseFinal(text: string, confidence: number, resultIndex: number): void {
 		let body = text.trim();
-		if (this.committedText && body.toLowerCase().startsWith(this.committedText.toLowerCase())) {
-			body = body.slice(this.committedText.length).trim();
+		if (this.committedText) {
+			const rest = remainderAfter(this.committedText, body);
+			if (rest !== null) body = rest;
 		}
 		if (!body) return;
 
+		// Text that extends or revises the held final replaces it; anything else is a new
+		// utterance, so the held one is committed first.
 		const pending = this.pendingFinal;
-		if (pending && !body.toLowerCase().startsWith(pending.text.toLowerCase())) {
+		if (pending && remainderAfter(pending.text, body) === null) {
 			this.flushPendingFinal();
 		}
 
