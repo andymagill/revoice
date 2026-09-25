@@ -81,6 +81,11 @@ export function getBrowserSpecificNotes(): string[] {
 		notes.push('Safari: AudioContext may require user gesture');
 	}
 
+	if (/Android/i.test(navigator.userAgent)) {
+		notes.push('Android: live transcription may not work while audio is being recorded');
+		notes.push('Android: add ?debug=1 to the URL to show an on-screen diagnostic log');
+	}
+
 	if (browser === 'chrome') {
 		notes.push('Chrome: Prefers audio/webm;codecs=opus for MediaRecorder');
 		notes.push('Chrome: Excellent Web Speech API support');

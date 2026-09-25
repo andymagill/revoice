@@ -17,10 +17,17 @@
  *   on a recognizer that is still shutting down, and the late `onend` would mark a live
  *   session as idle.
  * - Browsers end recognition on their own (silence timeouts, Android). If that happens
- *   while the engine is meant to be running we transparently restart it.
+ *   while the engine is meant to be running we transparently restart it. Restarts are
+ *   bounded: sessions that end within `MIN_HEALTHY_SESSION_MS` without a result count as
+ *   "rapid empty"; they are retried with backoff and, after `MAX_RAPID_EMPTY_SESSIONS`
+ *   in a row, the engine gives up with an error instead of spinning on "connecting"
+ *   forever. This is what happens on Android when the recognizer cannot get audio while
+ *   the page's own recorder holds the microphone.
+ * - A start watchdog aborts a recognizer that never reports `onstart`.
  * - Each recognition session numbers its results from 0 again, so the de-duplication
  *   index is reset whenever a session (re)starts.
  * - Safari requires `start()` to run inside a user-gesture handler.
+ * - Every lifecycle event is logged through `diag()` (see diagnostics.svelte.ts).
  *
  * @example
  * const engine = new NativeEngine();
@@ -31,6 +38,7 @@
  * await engine.stop();
  */
 
+import { diag } from '../diagnostics.svelte';
 import { TranscriptionEngine } from './base';
 import {
 	getSpeechRecognitionConstructor,
@@ -44,10 +52,36 @@ import type { EngineConfig, EngineMetadata } from '../types';
 const STOP_TIMEOUT_MS = 1500;
 
 /**
+ * How long `start()` may take to report `onstart`. Generous because a speech-permission
+ * prompt (when the page has not opened the microphone itself) blocks it.
+ */
+const START_TIMEOUT_MS = 15000;
+
+/**
+ * A session that lasts at least this long, or yields a result, is "healthy". Chrome ends a
+ * genuinely silent session after several seconds, so legitimate quiet is not penalised;
+ * only rapid-fire empty sessions (start, end, start, end...) are.
+ */
+const MIN_HEALTHY_SESSION_MS = 3000;
+
+/** Consecutive rapid empty sessions tolerated before giving up. */
+const MAX_RAPID_EMPTY_SESSIONS = 4;
+
+/** Delay before restart number N of consecutive rapid empty sessions (last value repeats). */
+const RESTART_BACKOFF_MS = [250, 500, 1000];
+
+/**
  * Errors that will not fix themselves on retry. Auto-reconnecting after these would spin
  * forever (and, for permission errors, re-prompt), so they end the session instead.
  */
-const FATAL_ERRORS = new Set(['not-allowed', 'service-not-allowed', 'audio-capture', 'network']);
+const FATAL_ERRORS = new Set([
+	'not-allowed',
+	'service-not-allowed',
+	'audio-capture',
+	'network',
+	'language-not-supported',
+	'bad-grammar',
+]);
 
 /** Errors that are routine during normal use and are not worth surfacing to the user. */
 const BENIGN_ERRORS = new Set(['no-speech', 'aborted']);
@@ -61,7 +95,7 @@ export class NativeEngine extends TranscriptionEngine {
 	/** True from `stop()` until the recognizer's `onend`; tells our stop apart from a natural end. */
 	private isStopping = false;
 
-	/** True while auto-restarting after a natural end; we stay `connecting` until a result arrives. */
+	/** True while auto-restarting after a natural end; we stay `connecting` until audio is confirmed. */
 	private isReconnecting = false;
 
 	/** Set by a fatal `onerror` so the following `onend` goes idle instead of reconnecting. */
@@ -70,6 +104,19 @@ export class NativeEngine extends TranscriptionEngine {
 	private stopPromise: Promise<void> | null = null;
 	private resolveStop: (() => void) | null = null;
 	private stopTimer: ReturnType<typeof setTimeout> | null = null;
+
+	private restartTimer: ReturnType<typeof setTimeout> | null = null;
+	private startWatchdog: ReturnType<typeof setTimeout> | null = null;
+
+	/** Number of recognition sessions begun, for correlating log lines. */
+	private sessionNumber = 0;
+	private sessionStartedAt = 0;
+	private sawAudio = false;
+	private sawSound = false;
+	private sawResult = false;
+
+	/** Consecutive sessions that ended quickly without a result. */
+	private rapidEmptySessions = 0;
 
 	/**
 	 * @throws Error if the Web Speech API is not available in this browser.
@@ -90,6 +137,24 @@ export class NativeEngine extends TranscriptionEngine {
 		this.recognition.onresult = (event) => this.handleResult(event);
 		this.recognition.onerror = (event) => this.handleError(event);
 		this.recognition.onend = () => this.handleEnd();
+
+		// Audio lifecycle: purely diagnostic, except `soundstart` which confirms audio flows.
+		this.recognition.onaudiostart = () => {
+			this.sawAudio = true;
+			diag('speech', 'audiostart', { session: this.sessionNumber });
+		};
+		this.recognition.onaudioend = () => diag('speech', 'audioend', { session: this.sessionNumber });
+		this.recognition.onsoundstart = () => {
+			this.sawSound = true;
+			diag('speech', 'soundstart', { session: this.sessionNumber });
+			this.confirmAudioFlowing();
+		};
+		this.recognition.onsoundend = () => diag('speech', 'soundend', { session: this.sessionNumber });
+		this.recognition.onspeechstart = () =>
+			diag('speech', 'speechstart', { session: this.sessionNumber });
+		this.recognition.onspeechend = () =>
+			diag('speech', 'speechend', { session: this.sessionNumber });
+		this.recognition.onnomatch = () => diag('speech', 'nomatch', { session: this.sessionNumber });
 	}
 
 	/**
@@ -119,17 +184,20 @@ export class NativeEngine extends TranscriptionEngine {
 		this.fatalErrorSeen = false;
 		this.isReconnecting = false;
 		this.lastResultIndex = 0;
+		this.rapidEmptySessions = 0;
 		this.setState('connecting');
 
 		try {
-			this.recognition.start();
+			this.beginSession('start');
 		} catch (error) {
 			// Chrome throws InvalidStateError if a session is somehow still open. That
 			// session is live, so keep waiting for its onstart rather than failing.
 			if (error instanceof Error && error.message.includes('already started')) {
 				console.warn('[NativeEngine] recognition already started; reusing running session');
+				diag('speech', 'already-started');
 				return;
 			}
+			diag('speech', 'start-threw', error);
 			this.setState('idle');
 			throw error;
 		}
@@ -145,13 +213,27 @@ export class NativeEngine extends TranscriptionEngine {
 		if (this.stopPromise) return this.stopPromise;
 		if (this.state === 'idle') return Promise.resolve();
 
+		diag('speech', 'stop()', { state: this.state });
+		// A pending restart means the recognizer is not running, so no `onend` will come.
+		const recognizerIdle = this.restartTimer !== null;
+		this.clearRestartTimer();
+		this.clearStartWatchdog();
+
 		this.isStopping = true;
 		const stopped = new Promise<void>((resolve) => {
 			this.resolveStop = resolve;
 			// If onend never arrives (recognizer already dead), don't hang the caller.
-			this.stopTimer = setTimeout(() => this.completeStop(), STOP_TIMEOUT_MS);
+			this.stopTimer = setTimeout(() => {
+				diag('speech', 'stop-timeout');
+				this.completeStop();
+			}, STOP_TIMEOUT_MS);
 		});
 		this.stopPromise = stopped;
+
+		if (recognizerIdle) {
+			this.completeStop();
+			return stopped;
+		}
 
 		try {
 			this.recognition.stop();
@@ -183,10 +265,64 @@ export class NativeEngine extends TranscriptionEngine {
 		};
 	}
 
+	/**
+	 * Call `recognition.start()` and arm the watchdog. Throws whatever `start()` throws.
+	 * Per-session bookkeeping is reset here so `handleEnd` can judge the session.
+	 */
+	private beginSession(reason: 'start' | 'restart'): void {
+		this.sessionNumber++;
+		this.sessionStartedAt = performance.now();
+		this.sawAudio = false;
+		this.sawSound = false;
+		this.sawResult = false;
+
+		diag('speech', 'recognition.start()', {
+			session: this.sessionNumber,
+			reason,
+			lang: this.recognition.lang,
+			continuous: this.recognition.continuous,
+			rapidEmptySessions: this.rapidEmptySessions,
+		});
+		this.recognition.start();
+		this.armStartWatchdog();
+	}
+
+	/** Abort a recognizer that never reports `onstart` instead of spinning on "connecting". */
+	private armStartWatchdog(): void {
+		this.clearStartWatchdog();
+		this.startWatchdog = setTimeout(() => {
+			this.startWatchdog = null;
+			if (this.state === 'idle' || this.isStopping) return;
+			diag('speech', 'start-timeout', { session: this.sessionNumber });
+			this.isReconnecting = false;
+			this.setState('idle');
+			try {
+				this.recognition.abort();
+			} catch (error) {
+				console.warn('[NativeEngine] recognition.abort() threw:', error);
+			}
+			this.emitError(
+				new Error('Speech recognition did not start. Check your connection and retry.')
+			);
+		}, START_TIMEOUT_MS);
+	}
+
+	private clearStartWatchdog(): void {
+		if (this.startWatchdog) clearTimeout(this.startWatchdog);
+		this.startWatchdog = null;
+	}
+
+	private clearRestartTimer(): void {
+		if (this.restartTimer) clearTimeout(this.restartTimer);
+		this.restartTimer = null;
+	}
+
 	/** Finish an explicit stop: clear bookkeeping, go idle, release the waiting caller. */
 	private completeStop(): void {
 		if (this.stopTimer) clearTimeout(this.stopTimer);
 		this.stopTimer = null;
+		this.clearRestartTimer();
+		this.clearStartWatchdog();
 		this.isStopping = false;
 		this.isReconnecting = false;
 		this.setState('idle');
@@ -197,9 +333,22 @@ export class NativeEngine extends TranscriptionEngine {
 		resolve?.();
 	}
 
+	/** After an auto-restart, audio (a result or a heard sound) proves we are really listening. */
+	private confirmAudioFlowing(): void {
+		if (this.isReconnecting) {
+			this.isReconnecting = false;
+			this.setState('listening');
+		}
+	}
+
 	private handleStart(): void {
+		this.clearStartWatchdog();
 		this.lastResultIndex = 0;
-		// After an auto-restart we stay `connecting` until real results confirm audio flows.
+		diag('speech', 'onstart', {
+			session: this.sessionNumber,
+			latencyMs: Math.round(performance.now() - this.sessionStartedAt),
+		});
+		// After an auto-restart we stay `connecting` until audio confirms it is flowing.
 		if (!this.isReconnecting && !this.isStopping) {
 			this.setState('listening');
 		}
@@ -214,15 +363,20 @@ export class NativeEngine extends TranscriptionEngine {
 	 * same final (seen on some Android builds) cannot duplicate it.
 	 */
 	private handleResult(event: SpeechRecognitionEventLike): void {
-		if (this.isReconnecting) {
-			this.isReconnecting = false;
-			this.setState('listening');
-		}
+		this.sawResult = true;
+		this.rapidEmptySessions = 0;
+		this.confirmAudioFlowing();
 
 		for (let i = event.resultIndex; i < event.results.length; i++) {
 			const result = event.results[i];
 			const { transcript, confidence } = result[0];
 
+			diag('speech', 'onresult', {
+				session: this.sessionNumber,
+				index: i,
+				isFinal: result.isFinal,
+				chars: transcript.length,
+			});
 			if (i >= this.lastResultIndex || !result.isFinal) {
 				this.emitResult({ text: transcript, isFinal: result.isFinal, confidence, resultIndex: i });
 			}
@@ -233,6 +387,11 @@ export class NativeEngine extends TranscriptionEngine {
 	}
 
 	private handleError(event: SpeechRecognitionErrorEventLike): void {
+		diag('speech', 'onerror', {
+			session: this.sessionNumber,
+			error: event.error,
+			message: event.message,
+		});
 		if (BENIGN_ERRORS.has(event.error)) {
 			console.debug('[NativeEngine] benign recognition error:', event.error);
 			return;
@@ -245,10 +404,23 @@ export class NativeEngine extends TranscriptionEngine {
 	}
 
 	/**
-	 * Recognizer ended. Three cases: we asked for it (finish the stop), a fatal error
-	 * occurred (go idle, do not retry), or the browser ended it on its own (restart).
+	 * Recognizer ended. Four cases: we asked for it (finish the stop), a fatal error
+	 * occurred (go idle, do not retry), the browser ended it repeatedly without hearing
+	 * anything (give up), or it ended on its own once (restart).
 	 */
 	private handleEnd(): void {
+		const durationMs = Math.round(performance.now() - this.sessionStartedAt);
+		diag('speech', 'onend', {
+			session: this.sessionNumber,
+			durationMs,
+			sawAudio: this.sawAudio,
+			sawSound: this.sawSound,
+			sawResult: this.sawResult,
+			stopping: this.isStopping,
+			fatal: this.fatalErrorSeen,
+		});
+		this.clearStartWatchdog();
+
 		if (this.isStopping) {
 			this.completeStop();
 			return;
@@ -261,14 +433,54 @@ export class NativeEngine extends TranscriptionEngine {
 		}
 		if (this.state === 'idle') return;
 
+		const healthy = this.sawResult || durationMs >= MIN_HEALTHY_SESSION_MS;
+		this.rapidEmptySessions = healthy ? 0 : this.rapidEmptySessions + 1;
+
+		if (this.rapidEmptySessions >= MAX_RAPID_EMPTY_SESSIONS) {
+			diag('speech', 'gave-up', {
+				rapidEmptySessions: this.rapidEmptySessions,
+				sawAudio: this.sawAudio,
+				sawSound: this.sawSound,
+			});
+			this.isReconnecting = false;
+			this.setState('idle');
+			this.emitError(
+				new Error(
+					'Speech recognition keeps ending without hearing anything. On some phones the ' +
+						'microphone cannot be shared with the recorder; audio is still being saved.'
+				)
+			);
+			return;
+		}
+
 		console.log('[NativeEngine] recognition ended on its own, reconnecting');
 		this.isReconnecting = true;
 		this.lastResultIndex = 0;
 		this.setState('connecting');
+
+		// Restart at once after a healthy session; back off only while sessions keep failing fast.
+		const delay =
+			this.rapidEmptySessions === 0
+				? 0
+				: RESTART_BACKOFF_MS[Math.min(this.rapidEmptySessions, RESTART_BACKOFF_MS.length) - 1];
+		if (delay === 0) {
+			this.restartNow();
+		} else {
+			diag('speech', 'restart-scheduled', { delayMs: delay });
+			this.restartTimer = setTimeout(() => {
+				this.restartTimer = null;
+				this.restartNow();
+			}, delay);
+		}
+	}
+
+	private restartNow(): void {
+		if (this.state === 'idle' || this.isStopping) return;
 		try {
-			this.recognition.start();
+			this.beginSession('restart');
 		} catch (error) {
 			console.error('[NativeEngine] failed to restart recognition:', error);
+			diag('speech', 'restart-threw', error);
 			this.isReconnecting = false;
 			this.setState('idle');
 			const reason = error instanceof Error ? error.message : String(error);

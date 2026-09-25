@@ -41,6 +41,17 @@ export interface SpeechRecognitionLike {
 	onresult: ((event: SpeechRecognitionEventLike) => void) | null;
 	onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
 	onend: (() => void) | null;
+	/**
+	 * Audio lifecycle events. Optional because support varies; they show whether the
+	 * recognizer actually receives audio, which is what mobile failures hinge on.
+	 */
+	onaudiostart?: (() => void) | null;
+	onaudioend?: (() => void) | null;
+	onsoundstart?: (() => void) | null;
+	onsoundend?: (() => void) | null;
+	onspeechstart?: (() => void) | null;
+	onspeechend?: (() => void) | null;
+	onnomatch?: (() => void) | null;
 	start(): void;
 	stop(): void;
 	abort(): void;

@@ -28,7 +28,14 @@
  *   "New Session while pausing" safe.
  */
 
-import { getSharedAudioContext, getSupportedAudioFormat } from './audio';
+import {
+	acquireMicrophone,
+	attachRecorderDiagnostics,
+	getSharedAudioContext,
+	getSupportedAudioFormat,
+	MicrophoneError,
+} from './audio';
+import { diag, getProbe } from './diagnostics.svelte';
 import {
 	createSession,
 	getSession,
@@ -58,16 +65,10 @@ const FLUSH_TIMEOUT_MS = 1000;
 /** How often the on-screen timer updates. */
 const TICK_INTERVAL_MS = 100;
 
-/** Turn a getUserMedia/MediaRecorder failure into a message a user can act on. */
+/** Turn a microphone/MediaRecorder failure into a message a user can act on. */
 function describeError(error: unknown): string {
-	if (error instanceof DOMException) {
-		if (error.name === 'NotAllowedError') {
-			return 'Microphone access was denied. Allow it in your browser settings and try again.';
-		}
-		if (error.name === 'NotFoundError') {
-			return 'No microphone was found.';
-		}
-	}
+	// MicrophoneError messages (from acquireMicrophone) are already written for users.
+	if (error instanceof MicrophoneError) return error.message;
 	return error instanceof Error ? error.message : String(error);
 }
 
@@ -226,30 +227,43 @@ export class Recorder {
 
 	private async doStart(): Promise<void> {
 		this.error = null;
+		const startedAt = performance.now();
+		const probe = getProbe();
+		diag('recorder', 'start', { probe });
 		try {
-			// Web Speech captures its own audio; this stream feeds MediaRecorder + analyser.
-			const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-			this.stream = stream;
-
-			const context = getSharedAudioContext();
-			const analyser = context.createAnalyser();
-			// 64-point FFT → 32 bins, one per visualizer bar (see EqVisualizer).
-			analyser.fftSize = 64;
-			const source = context.createMediaStreamSource(stream);
-			source.connect(analyser);
-			this.source = source;
-
 			const format = getSupportedAudioFormat();
-			const recorder = new MediaRecorder(stream, { mimeType: format.mimeType });
+			let analyser: AnalyserNode | null = null;
+			let recorder: MediaRecorder | null = null;
+
+			if (probe === 'nogum') {
+				// Diagnostic probe (?debug=1&probe=nogum): run speech recognition alone, with no
+				// microphone, analyser or MediaRecorder of our own. The engine ignores the stream.
+				this.stream = new MediaStream();
+			} else {
+				// Web Speech captures its own audio; this stream feeds MediaRecorder + analyser.
+				const stream = await acquireMicrophone();
+				this.stream = stream;
+
+				const context = getSharedAudioContext();
+				analyser = context.createAnalyser();
+				// 64-point FFT → 32 bins, one per visualizer bar (see EqVisualizer).
+				analyser.fftSize = 64;
+				const source = context.createMediaStreamSource(stream);
+				source.connect(analyser);
+				this.source = source;
+
+				recorder = new MediaRecorder(stream, { mimeType: format.mimeType });
+				attachRecorderDiagnostics(recorder);
+				recorder.ondataavailable = (event) => {
+					if (event.data.size > 0) {
+						this.chunks.push(event.data);
+						this.dirty = true;
+					}
+				};
+			}
 			this.mimeType = format.mimeType;
 			this.chunks = [];
 			this.dirty = false;
-			recorder.ondataavailable = (event) => {
-				if (event.data.size > 0) {
-					this.chunks.push(event.data);
-					this.dirty = true;
-				}
-			};
 			this.mediaRecorder = recorder;
 
 			const id = await createSession(
@@ -266,9 +280,14 @@ export class Recorder {
 			this.sessionId = id;
 			this.analyser = analyser;
 
-			recorder.start(CHUNK_INTERVAL_MS);
+			recorder?.start(CHUNK_INTERVAL_MS);
 			this.beginSegment();
 			this.state = 'recording';
+			diag('recorder', 'recording', {
+				sessionId: id,
+				mimeType: format.mimeType,
+				msSinceClick: Math.round(performance.now() - startedAt),
+			});
 
 			const session = await getSession(id);
 			if (session) this.hooks.sessionCreated?.(session);
@@ -276,6 +295,7 @@ export class Recorder {
 			await this.startEngine();
 		} catch (error) {
 			console.error('[Recorder] Failed to start recording:', error);
+			diag('recorder', 'start-failed', error);
 			this.teardown();
 			this.sessionId = null;
 			this.state = 'idle';
@@ -284,8 +304,9 @@ export class Recorder {
 	}
 
 	private async doPause(): Promise<void> {
+		diag('recorder', 'pause');
+		// `mediaRecorder` is null only in the ?probe=nogum diagnostic mode.
 		const recorder = this.mediaRecorder;
-		if (!recorder) return;
 
 		this.freezeClock();
 		try {
@@ -294,9 +315,11 @@ export class Recorder {
 			await this.engine?.stop();
 			this.interim = null;
 
-			recorder.pause();
-			await this.flush(recorder);
-			await this.persist();
+			if (recorder) {
+				recorder.pause();
+				await this.flush(recorder);
+				await this.persist();
+			}
 		} catch (error) {
 			console.error('[Recorder] Error while pausing:', error);
 			this.error = `Could not pause cleanly: ${describeError(error)}`;
@@ -305,12 +328,13 @@ export class Recorder {
 	}
 
 	private async doResume(): Promise<void> {
+		diag('recorder', 'resume');
+		// `mediaRecorder` is null only in the ?probe=nogum diagnostic mode.
 		const recorder = this.mediaRecorder;
-		if (!recorder) return;
 
 		this.error = null;
 		try {
-			recorder.resume();
+			recorder?.resume();
 		} catch (error) {
 			console.error('[Recorder] Failed to resume:', error);
 			this.error = describeError(error);
@@ -322,6 +346,7 @@ export class Recorder {
 	}
 
 	private async doFinalize(): Promise<void> {
+		diag('recorder', 'finalize');
 		this.freezeClock();
 		try {
 			await this.engine?.stop();
@@ -364,9 +389,11 @@ export class Recorder {
 	private async startEngine(): Promise<void> {
 		if (!this.engine || !this.stream) return;
 		try {
+			diag('recorder', 'engine-start-requested');
 			await this.engine.start(this.stream);
 		} catch (error) {
 			console.error('[Recorder] Transcription failed to start:', error);
+			diag('recorder', 'engine-start-failed', error);
 			this.error = `Transcription unavailable: ${describeError(error)}`;
 		}
 	}
@@ -390,6 +417,7 @@ export class Recorder {
 	}
 
 	private handleEngineError(error: Error): void {
+		diag('recorder', 'engine-error', { message: error.message, state: this.state });
 		if (this.state === 'recording') {
 			this.error = `Transcription problem: ${error.message}`;
 		}

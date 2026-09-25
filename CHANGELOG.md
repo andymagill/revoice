@@ -2,6 +2,20 @@
 
 All notable changes to ReVoice are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may include breaking changes).
 
+## [Unreleased]
+
+### Fixed
+
+- **Transcription stuck on "Connecting" on Android Chrome.** When speech recognition could not get audio (typically because the recorder held the microphone), the engine restarted it endlessly with no delay and never reported a problem. Restarts now back off, and after four rapid empty sessions the engine stops and shows an error while audio recording continues. A start watchdog also aborts a recognizer that never reports `onstart`.
+- `language-not-supported` and `bad-grammar` recognition errors now end the session instead of restarting it.
+- `stop()` during a pending restart resolves immediately instead of waiting for the stop timeout.
+
+### Added
+
+- **On-screen diagnostics** (`?debug=1`): a copyable event log covering the recorder, microphone, MediaRecorder, speech-recognition lifecycle (including `audiostart`/`soundstart`), AudioContext state, connectivity and page visibility, plus an environment snapshot. `?probe=nogum` runs speech recognition without the recorder's microphone to isolate contention.
+- `acquireMicrophone()` classifies microphone failures (`denied`, `not-found`, `in-use`, `insecure`, ...) into `MicrophoneError`, verifies the track is live and reports it being muted or ended. "Microphone in use" (`NotReadableError`) now has its own message.
+- Android note in the compatibility warning.
+
 ## [0.1.0] - 2026-09-24
 
 Stabilization release: the record → pause → resume → reopen flow now works end to end, and the recording logic moved out of the page component into testable classes.
