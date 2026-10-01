@@ -21,6 +21,9 @@
  *   while paused. `finalize` persists once more if anything was recorded since.
  * - The Recorder owns the microphone stream and always releases it in `teardown`. The
  *   transcription engine never stops the stream (see NativeEngine).
+ * - `mode` (see capture-mode.ts) decides what a recording captures. On Android the speech
+ *   service cannot share the microphone, so a recording is audio-only (no engine) or
+ *   transcript-only (no microphone, MediaRecorder or analyser; only duration is saved).
  * - Elapsed time is the sum of recording segments and excludes paused time, so the
  *   stored duration and transcript timestamps line up with the audio.
  * - State-changing commands never overlap: `start`/`pause`/`resume` are ignored while
@@ -35,6 +38,7 @@ import {
 	getSupportedAudioFormat,
 	MicrophoneError,
 } from './audio';
+import type { CaptureMode } from './capture-mode';
 import { diag, getProbe } from './diagnostics.svelte';
 import {
 	createSession,
@@ -100,6 +104,15 @@ export class Recorder {
 	/** Latest user-facing problem (permission denied, save failed, ...), or `null`. */
 	error = $state<string | null>(null);
 
+	/**
+	 * What the next recording captures (see `CaptureMode`). Change it with `setMode`, which
+	 * only applies while idle.
+	 */
+	mode = $state<CaptureMode>('both');
+
+	/** The mode of the recording in progress, fixed when it started so pause/resume agree. */
+	activeMode = $state<CaptureMode>('both');
+
 	private engine: ITranscriptionEngine | null;
 	private hooks: RecorderHooks;
 	private unsubscribers: Array<() => void> = [];
@@ -142,6 +155,12 @@ export class Recorder {
 	start(): Promise<void> {
 		if (this.state !== 'idle' || this.inFlight || this.finalizing) return Promise.resolve();
 		return this.track(this.doStart());
+	}
+
+	/** Choose what the next recording captures. Ignored unless idle. */
+	setMode(mode: CaptureMode): void {
+		if (this.state !== 'idle' || this.inFlight || this.finalizing) return;
+		this.mode = mode;
 	}
 
 	/** Pause recording and persist the audio so far. Ignored unless recording. */
@@ -229,15 +248,20 @@ export class Recorder {
 		this.error = null;
 		const startedAt = performance.now();
 		const probe = getProbe();
-		diag('recorder', 'start', { probe });
+		// Without an engine there is nothing to transcribe, so "transcript" would record nothing.
+		const requested = probe === 'nogum' ? 'transcript' : this.mode;
+		const mode: CaptureMode = !this.engine && requested === 'transcript' ? 'audio' : requested;
+		this.activeMode = mode;
+		diag('recorder', 'start', { mode, probe });
 		try {
 			const format = getSupportedAudioFormat();
 			let analyser: AnalyserNode | null = null;
 			let recorder: MediaRecorder | null = null;
 
-			if (probe === 'nogum') {
-				// Diagnostic probe (?debug=1&probe=nogum): run speech recognition alone, with no
-				// microphone, analyser or MediaRecorder of our own. The engine ignores the stream.
+			if (mode === 'transcript') {
+				// Transcript only: the speech service needs the microphone to itself on Android,
+				// so run recognition with no microphone, analyser or MediaRecorder of our own.
+				// The engine ignores the stream, which only exists so the engine can be started.
 				this.stream = new MediaStream();
 			} else {
 				// Web Speech captures its own audio; this stream feeds MediaRecorder + analyser.
@@ -305,7 +329,7 @@ export class Recorder {
 
 	private async doPause(): Promise<void> {
 		diag('recorder', 'pause');
-		// `mediaRecorder` is null only in the ?probe=nogum diagnostic mode.
+		// `mediaRecorder` is null in transcript-only mode.
 		const recorder = this.mediaRecorder;
 
 		this.freezeClock();
@@ -315,11 +339,9 @@ export class Recorder {
 			await this.engine?.stop();
 			this.interim = null;
 
-			if (recorder) {
-				recorder.pause();
-				await this.flush(recorder);
-				await this.persist();
-			}
+			recorder?.pause();
+			if (recorder) await this.flush(recorder);
+			await this.persist();
 		} catch (error) {
 			console.error('[Recorder] Error while pausing:', error);
 			this.error = `Could not pause cleanly: ${describeError(error)}`;
@@ -329,7 +351,7 @@ export class Recorder {
 
 	private async doResume(): Promise<void> {
 		diag('recorder', 'resume');
-		// `mediaRecorder` is null only in the ?probe=nogum diagnostic mode.
+		// `mediaRecorder` is null in transcript-only mode.
 		const recorder = this.mediaRecorder;
 
 		this.error = null;
@@ -387,7 +409,7 @@ export class Recorder {
 
 	/** Start (or restart after pause) the engine; a failure degrades to audio-only. */
 	private async startEngine(): Promise<void> {
-		if (!this.engine || !this.stream) return;
+		if (!this.engine || !this.stream || this.activeMode === 'audio') return;
 		try {
 			diag('recorder', 'engine-start-requested');
 			await this.engine.start(this.stream);
@@ -426,25 +448,30 @@ export class Recorder {
 	/**
 	 * Write the complete audio and current duration to IndexedDB (no-op if nothing new).
 	 * The blob is exposed for playback BEFORE the write, so a storage failure (e.g. quota)
-	 * still leaves the user with playable audio and a visible error.
+	 * still leaves the user with playable audio and a visible error. A transcript-only
+	 * recording has no audio, but its duration is still saved.
 	 */
 	private async persist(): Promise<void> {
 		const id = this.sessionId;
-		if (id === null || !this.dirty) return;
+		const hasNewAudio = this.dirty;
+		if (id === null || (!hasNewAudio && this.activeMode !== 'transcript')) return;
 
-		const blob = new Blob(this.chunks, { type: this.mimeType });
-		this.audioBlob = blob;
 		this.elapsedMs = this.accumulatedMs;
-		this.dirty = false;
+		let blob: Blob | null = null;
+		if (hasNewAudio) {
+			blob = new Blob(this.chunks, { type: this.mimeType });
+			this.audioBlob = blob;
+			this.dirty = false;
+		}
 
 		try {
-			await storeAudioData(id, blob);
+			if (blob) await storeAudioData(id, blob);
 			await updateSessionDuration(id, this.accumulatedMs);
 			this.hooks.audioSaved?.();
 		} catch (error) {
-			console.error('[Recorder] Failed to save audio:', error);
-			this.dirty = true;
-			this.error = `Could not save audio: ${describeError(error)}`;
+			console.error('[Recorder] Failed to save session:', error);
+			if (blob) this.dirty = true;
+			this.error = `Could not save ${blob ? 'audio' : 'session'}: ${describeError(error)}`;
 		}
 	}
 

@@ -4,6 +4,12 @@ All notable changes to ReVoice are documented here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Changed
+
+- **Android: choose Transcribe or Record audio.** Android's speech service cannot share the microphone with the page's recorder, so with both running transcription stalled on "Connecting". On Android a switch now picks one (default Transcribe, remembered); other browsers still do both. Transcribe mode never opens the microphone, so it saves no audio but does save the transcript and duration; Record audio turns live transcription off.
+- The `?debug=1` panel is now remembered per browser tab (sessionStorage) instead of forever (localStorage), so it no longer stays on after the URL parameter is removed. A flag stored by the earlier version is ignored and cleared.
+- `?probe=nogum` is now simply a way to force transcript-only mode on any device.
+
 ### Fixed
 
 - **Revised words on Android.** When Android revised an earlier word mid-sentence ("their" → "there"), the stale text was committed and the revised sentence repeated after it. A later result now replaces the held text if it extends or closely resembles it.

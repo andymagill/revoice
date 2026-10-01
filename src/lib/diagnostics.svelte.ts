@@ -7,7 +7,8 @@
  * works too.
  *
  * Switches (URL query, read once at load):
- * - `?debug=1` shows the panel and remembers that in localStorage; `?debug=0` turns it off.
+ * - `?debug=1` shows the panel and remembers that for this browser tab (sessionStorage), so
+ *   it survives reloads but not a new tab; `?debug=0` or the panel's Close button turns it off.
  * - `?probe=nogum` (only with debug on) runs speech recognition WITHOUT opening the
  *   microphone ourselves. If transcription works with it but not without, the recorder's
  *   own capture is starving the speech service (common on Android).
@@ -30,15 +31,17 @@ function readDebugFlag(): boolean {
 	if (typeof window === 'undefined') return false;
 	const param = new URLSearchParams(window.location.search).get('debug');
 	try {
+		// Earlier versions stored the flag in localStorage, where it never expired.
+		localStorage.removeItem(DEBUG_STORAGE_KEY);
 		if (param === '1') {
-			localStorage.setItem(DEBUG_STORAGE_KEY, '1');
+			sessionStorage.setItem(DEBUG_STORAGE_KEY, '1');
 			return true;
 		}
 		if (param === '0') {
-			localStorage.removeItem(DEBUG_STORAGE_KEY);
+			sessionStorage.removeItem(DEBUG_STORAGE_KEY);
 			return false;
 		}
-		return localStorage.getItem(DEBUG_STORAGE_KEY) === '1';
+		return sessionStorage.getItem(DEBUG_STORAGE_KEY) === '1';
 	} catch {
 		// Storage can throw (private mode, blocked site data): fall back to the URL alone.
 		return param === '1';
@@ -95,7 +98,7 @@ export function clearDiag(): void {
 /** Hide the panel and forget the setting (until `?debug=1` is used again). */
 export function disableDebug(): void {
 	try {
-		localStorage.removeItem(DEBUG_STORAGE_KEY);
+		sessionStorage.removeItem(DEBUG_STORAGE_KEY);
 	} catch {
 		// ignore
 	}
