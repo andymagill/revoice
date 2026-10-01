@@ -31,6 +31,11 @@ export function isIndexedDBSupported(): boolean {
 	return !!(window.indexedDB && typeof window.indexedDB.open === 'function');
 }
 
+/** Whether the browser is running on Android (any browser; matched on the user agent). */
+export function isAndroid(): boolean {
+	return typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+}
+
 /**
  * Best-effort browser family from the user agent.
  * Order matters: Edge and Chrome UAs both contain "Chrome/", and Chrome UAs contain "Safari/".
@@ -81,8 +86,9 @@ export function getBrowserSpecificNotes(): string[] {
 		notes.push('Safari: AudioContext may require user gesture');
 	}
 
-	if (/Android/i.test(navigator.userAgent)) {
-		notes.push('Android: live transcription may not work while audio is being recorded');
+	if (isAndroid()) {
+		notes.push('Android: speech recognition and audio recording cannot share the microphone');
+		notes.push('Android: choose "Record audio" or "Transcribe" before starting');
 		notes.push('Android: add ?debug=1 to the URL to show an on-screen diagnostic log');
 	}
 

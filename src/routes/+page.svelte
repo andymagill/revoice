@@ -1,11 +1,18 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { getSessionStore } from '$lib/context';
+	import {
+		loadCaptureMode,
+		needsCaptureChoice,
+		saveCaptureMode,
+		type CaptureMode,
+	} from '$lib/capture-mode';
 	import { diagState, installDiagnostics } from '$lib/diagnostics.svelte';
 	import { NativeEngine } from '$lib/engines/native';
 	import { Recorder } from '$lib/recorder.svelte';
 	import AudioPlaybackControls from '$lib/components/AudioPlaybackControls.svelte';
 	import AudioPlaybackProvider from '$lib/components/AudioPlaybackProvider.svelte';
+	import CaptureModeToggle from '$lib/components/CaptureModeToggle.svelte';
 	import DebugPanel from '$lib/components/DebugPanel.svelte';
 	import EqVisualizer from '$lib/components/EqVisualizer.svelte';
 	import RecordingControls from '$lib/components/RecordingControls.svelte';
@@ -48,6 +55,15 @@
 		// Durations in the sidebar change after each save.
 		audioSaved: () => void store.refresh(),
 	});
+
+	/** Android cannot record audio and transcribe at once, so the user picks (see capture-mode.ts). */
+	const showModeToggle = needsCaptureChoice(engine !== null);
+	recorder.setMode(loadCaptureMode(engine !== null));
+
+	function chooseMode(mode: CaptureMode) {
+		recorder.setMode(mode);
+		saveCaptureMode(mode);
+	}
 
 	/** Element currently loaded by the playback controls; drives the visualizer source. */
 	let playbackAudio = $state.raw<HTMLAudioElement | null>(null);
@@ -111,6 +127,13 @@
 						disabled={micDisabled}
 						onMicClick={handleMicClick}
 					/>
+					{#if showModeToggle}
+						<CaptureModeToggle
+							mode={recorder.mode}
+							disabled={recorder.state !== 'idle'}
+							onChange={chooseMode}
+						/>
+					{/if}
 					{#if recorder.error}
 						<p class="text-sm text-destructive text-center max-w-xs px-4" role="alert">
 							{recorder.error}
@@ -138,7 +161,7 @@
 							recordingAnalyser={recorder.analyser ?? undefined}
 							barCount={32}
 							height={150}
-							disabled={recorder.state === 'idle' && !playbackAudio}
+							disabled={!recorder.analyser && !playbackAudio}
 							frozen={recorder.state === 'paused' && !playbackAudio}
 						/>
 					</div>
@@ -156,9 +179,11 @@
 					<TranscriptView
 						finals={recorder.finals}
 						interim={recorder.interim}
-						notice={engine
-							? undefined
-							: 'Live transcription is not supported in this browser. Audio will still be recorded.'}
+						notice={!engine
+							? 'Live transcription is not supported in this browser. Audio will still be recorded.'
+							: recorder.state !== 'idle' && recorder.activeMode === 'audio'
+								? 'Live transcription is off while recording audio. Switch to Transcribe to get a transcript.'
+								: undefined}
 					/>
 				</CardContent>
 			</Card>

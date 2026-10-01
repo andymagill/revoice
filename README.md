@@ -185,13 +185,20 @@ These are handled transparently in the `NativeEngine` and `audio.ts` utilities.
 
 #### Android-Specific Behavior
 
-On Android, Chrome hands speech recognition to the system speech service, which opens its own microphone capture. If the page's recorder already holds the microphone, the service can receive silence, end immediately and restart (you may hear the start chime repeat). ReVoice detects this (repeated sessions that end within seconds without a result), stops retrying and shows an error while audio recording continues.
+On Android, Chrome hands speech recognition to the system speech service, which opens its own microphone capture and cannot share it with the page's recorder. With both running, the service hears silence, ends immediately and restarts, so no transcript appears. ReVoice therefore shows a **Transcribe / Record audio** switch on Android (default Transcribe, remembered in localStorage):
+
+- **Transcribe**: speech recognition only. The page never opens the microphone, so no audio is saved and the visualizer is idle; the transcript and duration are saved.
+- **Record audio**: audio only, with the visualizer and playback; live transcription is off.
+
+Other browsers record and transcribe together, with no switch. The mode is fixed when a recording starts and can only be changed while idle.
+
+Two Android behaviors remain: the speech service plays a sound each time it starts (and restarts after a pause, because Android ignores `continuous`), and a page cannot silence it. As a safety net, if recognition keeps ending without hearing anything (4 rapid empty sessions) the engine stops and shows an error instead of spinning on "Connecting".
 
 ### Debugging on Mobile
 
-Add `?debug=1` to the URL to show an on-screen log (recorder, microphone, MediaRecorder, speech engine, connectivity and visibility events, plus an environment snapshot). Use **Copy** to export it as JSON, **Close** to hide it (`?debug=0` also turns it off). The same events go to `console.debug`, so `chrome://inspect` works too.
+Add `?debug=1` to the URL to show an on-screen log (recorder, microphone, MediaRecorder, speech engine, connectivity and visibility events, plus an environment snapshot). Use **Copy** to export it as JSON, **Close** to hide it (`?debug=0` also turns it off). The panel stays on across reloads in the same browser tab only (sessionStorage); a new tab starts without it. The same events go to `console.debug`, so `chrome://inspect` works too.
 
-`?debug=1&probe=nogum` runs speech recognition without opening the microphone or recorder. If transcription works with the probe but not without it, the recorder's own capture is starving the speech service.
+`?debug=1&probe=nogum` forces transcript-only mode (no microphone or recorder) on any device, which is how the Android microphone conflict was confirmed. The probe is read from the URL each time and is not remembered.
 
 What to look for in the log:
 
@@ -206,6 +213,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full map. The main pieces:
 - **+layout.svelte**: app shell (sidebar with session history, header, page outlet). Creates the `SessionStore` and shares it via context.
 - **+page.svelte**: the dashboard. Creates the engine and the `Recorder` and composes the widgets below.
 - **RecordingControls**: mic button, timer and status text. Props: `recordingState`, `recordingTime`, `disabled`, `onMicClick`.
+- **CaptureModeToggle**: Transcribe / Record audio switch, shown on Android only. Props: `mode`, `disabled`, `onChange`.
 - **AudioPlaybackControls**: play/pause and seek bar for one blob. Props: `blob`, `disabled`, `durationMs`, `onAudioChange`.
 - **AudioPlaybackProvider**: routes the playback `<audio>` through an AnalyserNode and shares it via context.
 - **EqVisualizer**: canvas frequency bars. Props: `recordingAnalyser`, `barCount`, `height`, `barColor`, `disabled`, `frozen`.
